@@ -11,8 +11,7 @@ jobs:
         
         - name: Bun Install
           uses: oven-sh/setup-bun@v1
-        - run: un install
-        
+        - run: bun install
         - name: Bun Build
           run: bun run build_win
         - name: Upload Artifact
