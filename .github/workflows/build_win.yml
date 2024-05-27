@@ -39,7 +39,6 @@ jobs:
             release_name: Release ${{ github.ref }}
             draft: false
             prerelease: false
-            body_path: ./RELEASE.md
             tag_name: ${{ github.ref }}
         
 
