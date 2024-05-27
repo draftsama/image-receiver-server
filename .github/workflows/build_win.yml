@@ -1,57 +1,62 @@
-name: Bun Build on Windows to Exe
+name: Release
 on:
-  push:
-    branches:
-      - main
+    push:
+        branches:
+            - main
+         
+    
 jobs:
-    Build:
+    build:
         runs-on: windows-latest
         steps:
         - uses: actions/checkout@v4
-        
         - name: Bun Install
           uses: oven-sh/setup-bun@v1
         - run: bun install
         - name: Bun Build
           run: bun run build_win
-
         - name: Upload artifact
-          uses: actions/upload-artifact@v4
+          uses: actions/upload-artifact@v2
           with:
-            name: SFMR.exe
+            name: SFMR
             path: ./dist/SFMR.exe
-
-    Release:
-        needs: Build
+    release:
+        needs: build
         runs-on: ubuntu-latest
         steps:
         - name: Download artifact
-          uses: actions/download-artifact@v4
+          uses: actions/download-artifact@v2
           with:
-            name: SFMR.exe
+            name: SFMR
 
         - name: Create Release
-          id: create_release
           uses: actions/create-release@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          id: create_release
           with:
-            tag_name: ${{ github.ref }}
             release_name: Release ${{ github.ref }}
-            body: |
-              Changes in this Release
-              - First change
-              - Second change
             draft: false
             prerelease: false
+            tag_name: ${{ github.ref }}
+            body_path: ./RELEASE.md
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-        - name: Upload Release Asset
+        - name: Upload Release Asset'
           id: upload-release-asset 
           uses: actions/upload-release-asset@v1
           env:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           with:
             upload_url: ${{ steps.create_release.outputs.upload_url }} 
-            asset_path: ./SFMR.exe
+            asset_path: ./SFMR
             asset_name: SFMR.exe
             asset_content_type: application/octet-stream
+              
+      
+     
+        
+
+
+
+       
+           
