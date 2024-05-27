@@ -16,10 +16,10 @@ jobs:
           run: bun run build_win
 
         - name: Upload artifact
-          uses: actions/upload-artifact@v2
+          uses: actions/upload-artifact@v4
           with:
-            name: SFMR
-            path: ./dist/SFMR
+            name: SFMR.exe
+            path: ./dist/SFMR.exe
 
     Release:
         needs: Build
@@ -28,7 +28,7 @@ jobs:
         - name: Download artifact
           uses: actions/download-artifact@v4
           with:
-            name: SFMR
+            name: SFMR.exe
 
         - name: Create Release
           id: create_release
@@ -52,6 +52,6 @@ jobs:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           with:
             upload_url: ${{ steps.create_release.outputs.upload_url }} 
-            asset_path: ./SFMR
-            asset_name: SFMR
+            asset_path: ./SFMR.exe
+            asset_name: SFMR.exe
             asset_content_type: application/octet-stream
