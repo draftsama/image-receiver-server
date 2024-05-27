@@ -12,8 +12,8 @@
   "scripts": {
     "clean": "rm -rf dist && echo 'Done.'",
     "dev": "bun --watch index.ts",
-    "build_osx": "bun build --compile --bun-darwin-arm64 ./index.ts  --outfile server_osx",
-    "build_win": "bun build --compile --bun-windows-x64 ./index.ts  --outfile server_win"
+    "build_osx": "bun build --compile --bun-darwin-arm64 ./index.ts  --outfile dist/SFMR",
+    "build_win": "bun build --compile --bun-windows-x64 ./index.ts  --outfile dist/SFMR"
   },
   "type": "module",
   "dependencies": {
