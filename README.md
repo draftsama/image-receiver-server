@@ -9,7 +9,18 @@ bun install
 To run:
 
 ```bash
-bun run index.ts
+bun dev
 ```
 
-This project was created using `bun init` in bun v1.1.4. [Bun](https://bun.sh) is a fast all-in-one JavaScript runtime.
+## How to deploy new version:
+commit tag as `vX.Y.Z` and push it to the repository.
+
+```bash
+git tag -a v1.0 -m "v1.0"
+```
+
+```bash
+git push origin v1.0
+```
+
+

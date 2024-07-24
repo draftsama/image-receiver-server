@@ -19,8 +19,8 @@ jobs:
         - name: Upload artifact
           uses: actions/upload-artifact@v4
           with:
-            name: SFMR
-            path: ./dist/SFMR.exe
+            name: receiver-server
+            path: ./dist/receiver-server.exe
     release:
         needs: build
         runs-on: ubuntu-latest
@@ -28,7 +28,7 @@ jobs:
         - name: Download artifact
           uses: actions/download-artifact@v4
           with:
-            name: SFMR
+            name: receive-server
 
         - name: Create Release
           uses: actions/create-release@v1
@@ -49,8 +49,8 @@ jobs:
             GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           with:
             upload_url: ${{ steps.create_release.outputs.upload_url }} 
-            asset_path: ./SFMR.exe
-            asset_name: SFMR.exe
+            asset_path: ./receiver-server.exe
+            asset_name: receiver-server.exe
             asset_content_type: application/octet-stream
 
               
