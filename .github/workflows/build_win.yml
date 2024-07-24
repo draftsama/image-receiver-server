@@ -28,7 +28,7 @@ jobs:
         - name: Download artifact
           uses: actions/download-artifact@v4
           with:
-            name: receive-server
+            name: receiver-server
 
         - name: Create Release
           uses: actions/create-release@v1
