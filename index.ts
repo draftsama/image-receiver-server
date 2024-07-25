@@ -52,23 +52,6 @@ try {
     // console.log("dirname", __dirname);
 
 
-    //middleware to check the api key
-    app.use((req, res, next) => {
-        const api_key = req.headers!['api-key'] as string;
-
-        //if api key is not present
-        if (!api_key) {
-            res.status(401).json({ message: "Require api-key" });
-            return;
-        }
-
-        if (api_key !== AP_KEY) {
-            res.status(401).json({ message: "Unauthorized" });
-            return;
-        }
-        next!();
-    });
-
 
 
     api_router.get("/check", (req, res) => {
@@ -208,7 +191,24 @@ try {
 
 
 
-    app.use("/", api_router);
+    app.use("/api", api_router);
+    //middleware to check the api key
+    app.use((req, res, next) => {
+        const api_key = req.headers!['api-key'] as string;
+
+        //if api key is not present
+        if (!api_key) {
+            res.status(401).json({ message: "Require api-key" });
+            return;
+        }
+
+        if (api_key !== AP_KEY) {
+            res.status(401).json({ message: "Unauthorized" });
+            return;
+        }
+        next!();
+    });
+
 
 
     app.listen(port, () => {
