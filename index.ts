@@ -3,12 +3,49 @@ import multer from "multer"; // Import multer for handling file uploads
 import fs from "fs";
 import path from "path";
 
+
 const app = server();
 const api_router = app.router();
 
+const config_path = path.resolve('./config.txt')
+const errorLogPath = path.resolve('./error.log');
+const DEFAULT_SAVE_PATH = path.resolve('./SAVE_IMAGES');
+
+
+
+//check if error log file exist
+if (!fs.existsSync(errorLogPath)) {
+    //clear error log file
+    fs.writeFileSync(errorLogPath, '');
+}
+
+
+
+// Error log file path
+
+function logErrorToFile(error: Error | string): void {
+
+
+    console.log(error);
+
+    const timestamp: string = new Date().toISOString();
+    const errorMessage: string = `[${timestamp}] ${(error instanceof Error ? error.stack : error) || error}\n\n`;
+
+    fs.appendFileSync(errorLogPath, errorMessage, 'utf8');
+}
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error: Error) => {
+    logErrorToFile(error);
+    process.exit(1);
+});
+// Handle unhandled rejections
+process.on('unhandledRejection', (error: Error) => {
+    logErrorToFile(error);
+    process.exit(1);
+});
 
 const AP_KEY = "tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs"
-const DEFAULT_SAVE_PATH = path.join(__dirname, "SAVE_IMAGES");
 
 //get directory of this file
 
@@ -42,7 +79,7 @@ api_router.get("/check", (req, res) => {
 })
 
 
-const config_path = path.join(__dirname, "config.txt");
+
 
 //if config file not exist then create a default config file
 if (!fs.existsSync(config_path)) {
@@ -50,7 +87,7 @@ if (!fs.existsSync(config_path)) {
 
     fs.writeFileSync(config_path, `SAVE_PATH="${DEFAULT_SAVE_PATH}"\nPORT=5555\n`);
 } else {
-    console.log("---> Config file : ", config_path);
+    console.log("---> Config file : ",config_path);
 }
 
 
@@ -97,7 +134,7 @@ if (!fs.existsSync(SAVE_PATH)) {
     }
 
 }
-console.log("---> 'SAVE_PATH' Directory : ", SAVE_PATH);
+console.log("---> SAVE_PATH Directory : ",SAVE_PATH);
 
 
 
@@ -123,10 +160,10 @@ app.post("/upload", (req, res) => {
 
         // Decode the base64 image
         const matches = jsonObj.base64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
-        if (!matches || matches.length !== 3) { 
+        if (!matches || matches.length !== 3) {
             throw new Error("Invalid image format or data");
         }
-    
+
 
         const [, type, data] = matches;
         const prefix_name = jsonObj.prefix_name ? jsonObj.prefix_name : "image";
@@ -136,17 +173,17 @@ app.post("/upload", (req, res) => {
         const buffer = Buffer.from(data, "base64");
         const file_path = path.join(SAVE_PATH, filename);
 
-        fs.writeFileSync(file_path,new Uint8Array(buffer));
-        
+        fs.writeFileSync(file_path, new Uint8Array(buffer));
+
         console.log("---> Save image to : ", file_path);
-        
+
         res.status(200).json({
             success: true,
             message: "Image uploaded successfully",
             path: file_path,
         });
 
-    } catch (e : any) {
+    } catch (e: any) {
 
         res.status(400).json({
             success: false,
@@ -157,17 +194,23 @@ app.post("/upload", (req, res) => {
 
 
 
-   
+
 });
 
+try {
+
+    app.use("/", api_router);
 
 
-app.use("/", api_router);
+    app.listen(port, () => {
+        //get ip address
+        const ip = require("ip").address();
+        console.log('---> Server is running at :' + ip + ":" + port);
+    });
+} catch (e: Error | string | any) {
 
+    logErrorToFile(e);
+    process.exit();
 
-app.listen(port, () => {
-    //get ip address
-    const ip = require("ip").address();
-    console.log('---> Server is running at :' + ip + ":" + port);
-});
+}
 
