@@ -40,10 +40,10 @@ process.on('unhandledRejection', (reason: unknown) => {
 function checkApiKey(req: Request): any | null {
     const apiKey = req.headers.get('api-key');
     if (!apiKey) {
-        return new Response(JSON.stringify({ message: "Require api-key" }), { status: 401 ,headers: responseHeader});
+        return new Response(JSON.stringify({ message: "Require api-key" }), { status: 401, headers: responseHeader });
     }
     if (apiKey !== AP_KEY) {
-        return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401 ,headers: responseHeader});
+        return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401, headers: responseHeader });
     }
     return null;
 }
@@ -93,20 +93,29 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
     const encoded = await req.text();
     const payload = decodeURIComponent(encoded);
 
-    let jsonObj: { base64: string; prefix_name?: string };
+    let jsonObj: { base64: string; prefix_name?: string , folder?: string };
 
-    
+
     try {
         jsonObj = JSON.parse(payload);
         if (!jsonObj.base64) {
-           
-            return new Response(JSON.stringify({ success: false, message: "Missing 'base64' field" }), { status: 400,headers: responseHeader });
+
+            return new Response(JSON.stringify({ success: false, message: "Missing 'base64' field" }), { status: 400, headers: responseHeader });
         }
 
         const matches = jsonObj.base64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
-            return new Response(JSON.stringify({ success: false, message: "Invalid base64 format" }), { status: 400,headers: responseHeader });
+            return new Response(JSON.stringify({ success: false, message: "Invalid base64 format" }), { status: 400, headers: responseHeader });
         }
+
+        if (jsonObj.folder) {
+            savePath = path.join(savePath, jsonObj.folder);
+            if (!
+                fs.existsSync(savePath)) {
+                fs.mkdirSync(savePath, { recursive: true });
+            }
+        }
+
 
         const [, type, data] = matches;
         const prefixName = jsonObj.prefix_name || "image";
@@ -119,11 +128,11 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
 
         return new Response(
             JSON.stringify({ success: true, message: "Image uploaded successfully", path: filePath }),
-            { status: 200,headers: responseHeader }
+            { status: 200, headers: responseHeader }
         );
     } catch (e: any) {
         logErrorToFile(e);
-        return new Response(JSON.stringify({ success: false, message: e.message }), { status: 400,headers: responseHeader });
+        return new Response(JSON.stringify({ success: false, message: e.message }), { status: 400, headers: responseHeader });
     }
 }
 
@@ -133,15 +142,14 @@ const responseHeader = {
 
 
 // Handle incoming requests
-async function handleRequest(req:Request): Promise<Response> {
+async function handleRequest(req: Request): Promise<Response> {
     // get type of request
-    
+
     const apiKeyError = checkApiKey(req);
     if (apiKeyError) return apiKeyError;
 
-    
-    console.log(req.headers.get('host'));
-    
+
+
     //log method and url
     // console.log("---> Method: ", req.method);
 
@@ -158,10 +166,19 @@ async function handleRequest(req:Request): Promise<Response> {
             status: 200,
             headers: responseHeader
         });
+    } else if (req.method === "GET" && pathname === "/save_path") {
+        return new Response(JSON.stringify({
+            success: true,
+            save_path: SAVE_PATH
+        }), {
+            status: 200,
+            headers: responseHeader
+        });
+
     } else if (req.method === "POST" && pathname === "/upload") {
         return uploadImage(req, SAVE_PATH);
     } else {
-        return new Response(JSON.stringify({ success: false, message: "CANNOT GET: The requested resource was not found" }), { status: 404 , headers: responseHeader});
+        return new Response(JSON.stringify({ success: false, message: "CANNOT GET: The requested resource was not found" }), { status: 404, headers: responseHeader });
     }
 }
 
@@ -169,16 +186,16 @@ async function handleRequest(req:Request): Promise<Response> {
 try {
     console.log("---> Save Image Folder : ", SAVE_PATH);
 
-   const server =  serve({
+    const server = serve({
         fetch: handleRequest,
         port: port,
     });
 
     //get ip address
-    const ip  = require('ip').address();
+    const ip = require('ip').address();
 
 
-    console.log('---> Server is running on '+ip+':' + port);
+    console.log('---> Server is running on ' + ip + ':' + port);
 } catch (e: any) {
     logErrorToFile(e);
     process.exit(1);
