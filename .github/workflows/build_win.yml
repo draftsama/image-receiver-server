@@ -26,7 +26,8 @@ jobs:
         run: bun run build_win_cert
 
       - name: Remove existing zip (if any)
-        run: if exist ./dist/receiver-server.zip del /F /Q ./dist/receiver-server.zip
+        run: if (Test-Path "./dist/receiver-server.zip") { Remove-Item "./dist/receiver-server.zip" -Force }
+        shell: pwsh
 
       - name: Zip artifact
         run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
