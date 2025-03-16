@@ -1,2 +1,2 @@
-SAVE_PATH="/Users/draftsama/Works/social-face-receiver/SAVE_IMAGES"
+SAVE_PATH="/Users/draftsama/Desktop/ImageImporter"
 PORT=34213

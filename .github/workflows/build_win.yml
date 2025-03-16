@@ -15,7 +15,7 @@ jobs:
           uses: oven-sh/setup-bun@v1
         - run: bun install
         - name: Bun Build
-          run: bun run build_win
+          run: bun run build_win_cert
         - name: Zip artifact
           run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
         - name: Upload artifact
