@@ -17,7 +17,7 @@ jobs:
         - name: Bun Build
           run: bun run build_win_cert
         - name: Zip artifact
-          run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
+          run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.signed
         - name: Upload artifact
           uses: actions/upload-artifact@v4
           with:
@@ -54,13 +54,3 @@ jobs:
             asset_path: ./receiver-server.zip
             asset_name: receiver-server.zip
             asset_content_type: application/octet-stream
-
-              
-      
-     
-        
-
-
-
-       
-           

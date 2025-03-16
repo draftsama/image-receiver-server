@@ -16,7 +16,7 @@
     "dev": "bun --watch index.ts",
     "build_osx": "bun build --compile --bun-darwin-arm64 ./index.ts  --outfile dist/receiver-server",
     "build_win": "bun build --compile --bun-windows-x64 ./index.ts  --outfile dist/receiver-server",
-    "build_win_cert": "bun build --compile --bun-windows-x64 ./index.ts  --outfile dist/receiver-server && openssl smime -sign -in dist/receiver-server -out dist/receiver-server.signed -signer cert.pem -inkey key.pem -outform DER -passin pass:Df3WjBmZXG"
+    "build_win_cert": "bun build --compile --bun-windows-x64 ./index.ts  --outfile dist/receiver-server.exe && openssl smime -sign -in dist/receiver-server.exe -out dist/receiver-server.signed -signer cert.pem -inkey key.pem -outform DER -passin pass:Df3WjBmZXG"
 
   },
   "type": "module",
