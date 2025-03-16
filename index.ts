@@ -23,7 +23,7 @@ function logErrorToFile(error: Error | string): void {
     const timestamp = new Date().toISOString();
     const errorMessage = `[${timestamp}] ${error instanceof Error ? error.stack : error}\n\n`;
     fs.appendFileSync(ERROR_LOG_PATH, errorMessage, 'utf8');
-    console.error(error);
+    console.error(errorMessage); // Log the error message to the console as well
 }
 
 // Handle uncaught exceptions and unhandled rejections

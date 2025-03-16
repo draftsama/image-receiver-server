@@ -1,66 +1,70 @@
 name: Release
 on:
-    push:
-        tags:
-            - 'v*'
-         
+  push:
+    tags:
+      - 'v*'
+
 permissions:
-        contents: write
+  contents: write
+
 jobs:
-    build:
-        runs-on: windows-latest
-        steps:
-        - uses: actions/checkout@v4
-        - name: Bun Install
-          uses: oven-sh/setup-bun@v1
-        - run: bun install
-        - name: Bun Build
-          run: bun run build_win_cert
-        - name: Zip artifact
-          run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
-        - name: Upload artifact
-          uses: actions/upload-artifact@v4
-          with:
-            name: receiver-server
-            path: ./dist/receiver-server.zip
-    release:
-        needs: build
-        runs-on: ubuntu-latest
-        steps:
-        - name: Download artifact
-          uses: actions/download-artifact@v4
-          with:
-            name: receiver-server
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-        - name: Create Release
-          uses: actions/create-release@v1
-          id: create_release
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            release_name: Release ${{ github.ref }}
-            draft: false
-            prerelease: false
-            tag_name: ${{ github.ref }}
-        
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
 
-        - name: Upload Release Asset
-          id: upload-release-asset 
-          uses: actions/upload-release-asset@v1
-          env:
-            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          with:
-            upload_url: ${{ steps.create_release.outputs.upload_url }} 
-            asset_path: ./receiver-server.zip
-            asset_name: receiver-server.zip
-            asset_content_type: application/octet-stream
+      - name: Install dependencies
+        run: bun install
 
-              
-      
-     
-        
+      - name: Build Project
+        run: bun run build_win_cert
 
+      - name: Remove existing zip (if any)
+        run: if exist ./dist/receiver-server.zip del /F /Q ./dist/receiver-server.zip
 
+      - name: Zip artifact
+        run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
 
-       
-           
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: receiver-server
+          path: ./dist/receiver-server.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: receiver-server
+          path: .
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Release ${{ github.ref }}
+          draft: false
+          prerelease: false
+
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./receiver-server.zip
+          asset_name: receiver-server.zip
+          asset_content_type: application/zip
