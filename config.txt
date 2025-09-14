@@ -1,2 +1,16 @@
-SAVE_PATH="/Users/draftsama/Desktop/ImageImporter"
+# Image Receiver Server Configuration
+# Generated on 2025-09-13T13:21:05.442Z
+
+# Basic Configuration
+SAVE_PATH="/Users/draftsama/Works/backend/image-receiver-server/SAVE_IMAGES"
 PORT=34213
+API_KEY="tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs"
+
+# FTP Configuration (uncomment and fill to enable FTP upload)
+FTP_HOST="game.funplus.in.th"
+FTP_PORT=2121
+FTP_USERNAME="qrcode@game.funplus.in.th"
+FTP_PASSWORD="hW4Cv6qyKZMcHNKu2nR9"
+FTP_REMOTE_PATH="/public_html"
+FTP_SECURE=false
+FTP_DIRECTORY=qrcode/123

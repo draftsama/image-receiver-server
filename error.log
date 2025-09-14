@@ -1,0 +1,14 @@
+[2025-09-13T13:05:25.182Z] Error: Failed to start server. Is port 34213 in use?
+    at serve (unknown)
+    at /Users/draftsama/Works/backend/image-receiver-server/index.ts:542:20
+    at moduleEvaluation (native)
+    at moduleEvaluation (native)
+    at <anonymous> (native:2)
+
+[2025-09-13T13:11:40.751Z] Error: Failed to start server. Is port 5555 in use?
+    at serve (unknown)
+    at /Users/draftsama/Works/backend/image-receiver-server/index.ts:609:20
+    at moduleEvaluation (native)
+    at moduleEvaluation (native)
+    at <anonymous> (native:2)
+

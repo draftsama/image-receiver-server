@@ -1,17 +1,45 @@
 import { serve } from "bun";
+import { log } from "console";
 import fs from "fs";
 import path from "path";
+
+// Configuration interface
+interface Config {
+    SAVE_PATH: string;
+    PORT: number;
+    API_KEY?: string;
+    FTP_HOST?: string;
+    FTP_PORT?: number;
+    FTP_USERNAME?: string;
+    FTP_PASSWORD?: string;
+    FTP_REMOTE_PATH?: string;
+    FTP_SECURE?: boolean;
+    FTP_DIRECTORY?: string;
+}
+
+// Default configuration values
+const DEFAULT_CONFIG: Config = {
+    SAVE_PATH: path.resolve('./SAVE_IMAGES'),
+    PORT: 5555,
+    API_KEY: "tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs",
+    FTP_HOST: undefined,
+    FTP_PORT: 21,
+    FTP_USERNAME: undefined,
+    FTP_PASSWORD: undefined,
+    FTP_REMOTE_PATH: "/",
+    FTP_SECURE: false,
+    FTP_DIRECTORY: undefined
+};
 
 // Constants
 const CONFIG_PATH = path.resolve('./config.txt');
 const ERROR_LOG_PATH = path.resolve('./error.log');
-const DEFAULT_SAVE_PATH = path.resolve('./SAVE_IMAGES');
-const AP_KEY = "tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs";
+const AP_KEY = DEFAULT_CONFIG.API_KEY;
 
 createDefaultConfig();
 const configs = parseConfigFile();
-const SAVE_PATH = ensureSavePath(configs["SAVE_PATH"] as string || DEFAULT_SAVE_PATH);
-const port = configs["PORT"] as number || 5555;
+const SAVE_PATH = ensureSavePath(configs.SAVE_PATH || DEFAULT_CONFIG.SAVE_PATH);
+const port = configs.PORT || DEFAULT_CONFIG.PORT;
 
 // Check if error log file exists and clear it if not
 if (!fs.existsSync(ERROR_LOG_PATH)) {
@@ -52,30 +80,28 @@ function checkApiKey(req: Request): any | null {
 function createDefaultConfig(): void {
     if (!fs.existsSync(CONFIG_PATH)) {
         console.log("---> Create a default config file");
-        fs.writeFileSync(CONFIG_PATH, `SAVE_PATH="${DEFAULT_SAVE_PATH}"\nPORT=5555\n`);
+        const defaultConfigString = [
+            `SAVE_PATH="${DEFAULT_CONFIG.SAVE_PATH}"`,
+            `PORT=${DEFAULT_CONFIG.PORT}`,
+            `API_KEY="${DEFAULT_CONFIG.API_KEY}"`,
+            `# FTP Configuration (uncomment to enable)`,
+            `# FTP_HOST="your.ftp.server.com"`,
+            `# FTP_PORT=${DEFAULT_CONFIG.FTP_PORT}`,
+            `# FTP_USERNAME="your_username"`,
+            `# FTP_PASSWORD="your_password"`,
+            `# FTP_REMOTE_PATH="${DEFAULT_CONFIG.FTP_REMOTE_PATH}"`,
+            `# FTP_SECURE=${DEFAULT_CONFIG.FTP_SECURE}`,
+            ``
+        ].join('\n');
+        fs.writeFileSync(CONFIG_PATH, defaultConfigString);
     } else {
         console.log("---> Config file : ", CONFIG_PATH);
     }
-
 }
 
-// Parse config file into an object
-function parseConfigFile(): Record<string, string | number | boolean | undefined> {
-    const configs: Record<string, string | number | boolean | undefined> = {};
-    const lines = fs.readFileSync(CONFIG_PATH, "utf-8").split("\n");
-    lines.forEach(line => {
-        const [key, value] = line.split("=");
-        if (value === "TRUE" || value === "true") {
-            configs[key] = true;
-        } else if (value === "FALSE" || value === "false") {
-            configs[key] = false;
-        } else if (!isNaN(Number(value))) {
-            configs[key] = Number(value);
-        } else {
-            configs[key] = value ? value.replace(/"/g, "") : undefined;
-        }
-    });
-    return configs;
+// Parse config file into a typed configuration object
+function parseConfigFile(): Config {
+    return validateAndFixConfig();
 }
 
 // Ensure the save path exists
@@ -88,15 +114,168 @@ function ensureSavePath(savePath: string): string {
     return savePath;
 }
 
+// Function to get current configuration
+function getCurrentConfig(): Config {
+    return parseConfigFile();
+}
+
+// Function to reset config to default values
+function resetConfigToDefault(): void {
+    console.log("---> Resetting config to default values");
+    fs.unlinkSync(CONFIG_PATH);
+    createDefaultConfig();
+}
+
+// Function to update specific config value
+function updateConfigValue(key: keyof Config, value: any): boolean {
+    try {
+        const currentConfig = getCurrentConfig();
+        (currentConfig as any)[key] = value;
+
+        const configLines = [
+            `SAVE_PATH="${currentConfig.SAVE_PATH}"`,
+            `PORT=${currentConfig.PORT}`,
+            `API_KEY="${currentConfig.API_KEY}"`,
+        ];
+
+        // Add optional FTP settings if they exist
+        if (currentConfig.FTP_HOST) {
+            configLines.push(`FTP_HOST="${currentConfig.FTP_HOST}"`);
+            configLines.push(`FTP_PORT=${currentConfig.FTP_PORT}`);
+            if (currentConfig.FTP_USERNAME) configLines.push(`FTP_USERNAME="${currentConfig.FTP_USERNAME}"`);
+            if (currentConfig.FTP_PASSWORD) configLines.push(`FTP_PASSWORD="${currentConfig.FTP_PASSWORD}"`);
+            configLines.push(`FTP_REMOTE_PATH="${currentConfig.FTP_REMOTE_PATH}"`);
+            configLines.push(`FTP_SECURE=${currentConfig.FTP_SECURE}`);
+            if (currentConfig.FTP_DIRECTORY) configLines.push(`FTP_DIRECTORY=${currentConfig.FTP_DIRECTORY}`);
+        }
+
+        fs.writeFileSync(CONFIG_PATH, configLines.join('\n') + '\n');
+        console.log(`---> Updated ${key} to ${value}`);
+        return true;
+    } catch (error: any) {
+        console.error(`---> Failed to update config: ${error.message}`);
+        return false;
+    }
+}
+
+// Function to validate config and fix missing values
+function validateAndFixConfig(): Config {
+    let needsRewrite = false;
+    const configData: Partial<Config> = {};
+
+    // Read existing config file
+    if (fs.existsSync(CONFIG_PATH)) {
+        const lines = fs.readFileSync(CONFIG_PATH, "utf-8").split("\n");
+
+        lines.forEach(line => {
+            const trimmedLine = line.trim();
+            if (!trimmedLine || trimmedLine.startsWith('#')) return;
+
+            const [key, value] = trimmedLine.split("=");
+            if (!key || !value) return;
+
+            const cleanKey = key.trim() as keyof Config;
+            const cleanValue = value.replace(/"/g, "").trim();
+
+            // Type conversion
+            switch (cleanKey) {
+                case 'PORT':
+                case 'FTP_PORT':
+                    configData[cleanKey] = Number(cleanValue);
+                    break;
+                case 'FTP_SECURE':
+                    configData[cleanKey] = cleanValue.toLowerCase() === 'true';
+                    break;
+                default:
+                    (configData as any)[cleanKey] = cleanValue || undefined;
+                    break;
+            }
+        });
+    } else {
+        needsRewrite = true;
+    }
+
+    // Check for missing values and set defaults
+    const finalConfig: Config = {
+        SAVE_PATH: configData.SAVE_PATH || DEFAULT_CONFIG.SAVE_PATH,
+        PORT: configData.PORT || DEFAULT_CONFIG.PORT,
+        API_KEY: configData.API_KEY || DEFAULT_CONFIG.API_KEY,
+        FTP_HOST: configData.FTP_HOST || DEFAULT_CONFIG.FTP_HOST,
+        FTP_PORT: configData.FTP_PORT || DEFAULT_CONFIG.FTP_PORT,
+        FTP_USERNAME: configData.FTP_USERNAME || DEFAULT_CONFIG.FTP_USERNAME,
+        FTP_PASSWORD: configData.FTP_PASSWORD || DEFAULT_CONFIG.FTP_PASSWORD,
+        FTP_REMOTE_PATH: configData.FTP_REMOTE_PATH || DEFAULT_CONFIG.FTP_REMOTE_PATH,
+        FTP_SECURE: configData.FTP_SECURE !== undefined ? configData.FTP_SECURE : DEFAULT_CONFIG.FTP_SECURE,
+        FTP_DIRECTORY: configData.FTP_DIRECTORY || DEFAULT_CONFIG.FTP_DIRECTORY,
+    };
+
+    // Check if any default values were used (meaning something was missing)
+    const configKeys = Object.keys(DEFAULT_CONFIG) as (keyof Config)[];
+    for (const key of configKeys) {
+        if (configData[key] === undefined && DEFAULT_CONFIG[key] !== undefined) {
+            needsRewrite = true;
+            console.log(`---> Missing config value for ${key}, using default: ${DEFAULT_CONFIG[key]}`);
+        }
+    }
+
+    // Rewrite config file if needed
+    if (needsRewrite) {
+        console.log("---> Rewriting config file with complete values...");
+        writeCompleteConfigFile(finalConfig);
+    }
+
+    return finalConfig;
+}
+
+// Function to write complete config file
+function writeCompleteConfigFile(config: Config): void {
+    const configLines = [
+        `# Image Receiver Server Configuration`,
+        `# Generated on ${new Date().toISOString()}`,
+        ``,
+        `# Basic Configuration`,
+        `SAVE_PATH="${config.SAVE_PATH}"`,
+        `PORT=${config.PORT}`,
+        `API_KEY="${config.API_KEY}"`,
+        ``,
+        `# FTP Configuration (uncomment and fill to enable FTP upload)`,
+    ];
+
+    if (config.FTP_HOST) {
+        configLines.push(`FTP_HOST="${config.FTP_HOST}"`);
+        configLines.push(`FTP_PORT=${config.FTP_PORT}`);
+        if (config.FTP_USERNAME) configLines.push(`FTP_USERNAME="${config.FTP_USERNAME}"`);
+        if (config.FTP_PASSWORD) configLines.push(`FTP_PASSWORD="${config.FTP_PASSWORD}"`);
+        configLines.push(`FTP_REMOTE_PATH="${config.FTP_REMOTE_PATH}"`);
+        configLines.push(`FTP_SECURE=${config.FTP_SECURE}`);
+        if (config.FTP_DIRECTORY) configLines.push(`FTP_DIRECTORY=${config.FTP_DIRECTORY}`);
+    } else {
+        configLines.push(`# FTP_HOST="your.ftp.server.com"`);
+        configLines.push(`# FTP_PORT=${DEFAULT_CONFIG.FTP_PORT}`);
+        configLines.push(`# FTP_USERNAME="your_username"`);
+        configLines.push(`# FTP_PASSWORD="your_password"`);
+        configLines.push(`# FTP_REMOTE_PATH="${DEFAULT_CONFIG.FTP_REMOTE_PATH}"`);
+        configLines.push(`# FTP_SECURE=${DEFAULT_CONFIG.FTP_SECURE}`);
+        configLines.push(`# FTP_DIRECTORY="subfolder"  # Optional: directory name or path`);
+    }
+
+    configLines.push('');
+
+    fs.writeFileSync(CONFIG_PATH, configLines.join('\n'));
+    console.log("---> Config file has been updated with complete values");
+}
+
 // Upload image in base64 format
 async function uploadImage(req: Request, savePath: string): Promise<Response> {
-    const encoded = await req.text();
-    const payload = decodeURIComponent(encoded);
-
-    let jsonObj: { base64: string; prefix_name?: string , folder?: string };
-
-
     try {
+        console.log("---> Upload Image <---");
+        const encoded = await req.text();
+        const payload = decodeURIComponent(encoded);
+
+        let jsonObj: { base64: string; prefix_name?: string, folder?: string, enable_ftp?: boolean };
+
+
+
         jsonObj = JSON.parse(payload);
         if (!jsonObj.base64) {
 
@@ -119,12 +298,40 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
 
         const [, type, data] = matches;
         const prefixName = jsonObj.prefix_name || "image";
-        const filename = `${prefixName}_${Date.now()}.${type}`;
+        //today format: 22_Dec_2025-22_00_00
+        const date = new Date();
+        const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
+        const filename = `${prefixName}-${dateString}.${type}`;
         const buffer = Buffer.from(data, "base64");
         const filePath = path.join(savePath, filename);
 
         fs.writeFileSync(filePath, new Uint8Array(buffer));
         console.log("---> Save image to : ", filePath);
+
+        // Check if FTP upload is enabled
+        if (jsonObj.enable_ftp) {
+            const ftpResult = await uploadToFtp(buffer, filename);
+            if (ftpResult.success) {
+                return new Response(
+                    JSON.stringify({
+                        success: true,
+                        message: "Image uploaded successfully to both local and FTP",
+                        public_url: ftpResult.url
+                    }),
+                    { status: 200, headers: responseHeader }
+                );
+            } else {
+                // Local upload succeeded but FTP failed
+                return new Response(
+                    JSON.stringify({
+                        success: true,
+                        message: `Image uploaded locally but FTP upload failed: ${ftpResult.message}`,
+                        local_path: filePath
+                    }),
+                    { status: 200, headers: responseHeader }
+                );
+            }
+        }
 
         return new Response(
             JSON.stringify({ success: true, message: "Image uploaded successfully", path: filePath }),
@@ -135,6 +342,154 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
         return new Response(JSON.stringify({ success: false, message: e.message }), { status: 400, headers: responseHeader });
     }
 }
+
+// Shared FTP upload function
+async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success: boolean; message: string; url?: string }> {
+    const ftp = require('ftp');
+    const client = new ftp();
+
+    return new Promise((resolve) => {
+        try {
+            if (!configs.FTP_HOST || !configs.FTP_PORT || !configs.FTP_USERNAME || !configs.FTP_PASSWORD) {
+                resolve({
+                    success: false,
+                    message: "Missing FTP configuration in config file"
+                });
+                return;
+            }
+
+            const remotePath = configs.FTP_REMOTE_PATH || "/";
+            let remoteFilePath: string;
+            let publicUrl: string;
+
+            if (configs.FTP_DIRECTORY) {
+                const remoteDirectory = remotePath.endsWith('/') ? remotePath + configs.FTP_DIRECTORY : remotePath + '/' + configs.FTP_DIRECTORY;
+                remoteFilePath = remoteDirectory + '/' + filename;
+                publicUrl = `https://${configs.FTP_HOST}/${configs.FTP_DIRECTORY}/${filename}`;
+            } else {
+                remoteFilePath = remotePath.endsWith('/') ? remotePath + filename : remotePath + '/' + filename;
+                publicUrl = `https://${configs.FTP_HOST}/${filename}`;
+            }
+
+            client.on('ready', () => {
+                client.put(buffer, remoteFilePath, (err: any) => {
+                    if (err) {
+                        logErrorToFile(err);
+                        resolve({
+                            success: false,
+                            message: `FTP upload failed: ${err.message}`
+                        });
+                    } else {
+                        console.log("---> Upload image to FTP: ", publicUrl);
+                        resolve({
+                            success: true,
+                            message: "Image uploaded to FTP successfully",
+                            url: publicUrl
+                        });
+                    }
+                    client.end();
+                });
+            });
+
+            client.on('error', (err: any) => {
+                logErrorToFile(err);
+                resolve({
+                    success: false,
+                    message: `FTP connection failed: ${err.message}`
+                });
+            });
+
+            client.connect({
+                host: configs.FTP_HOST,
+                port: configs.FTP_PORT,
+                user: configs.FTP_USERNAME,
+                password: configs.FTP_PASSWORD,
+                secure: configs.FTP_SECURE || false
+            });
+
+        } catch (error: any) {
+            logErrorToFile(error);
+            resolve({
+                success: false,
+                message: `FTP upload failed: ${error.message}`
+            });
+        }
+    });
+}
+
+
+// Example payload for FTP upload
+// {
+//     "prefix_name": "test",
+//     "base64": "data:image/png;base64,iVBORw0KGgoAAAANSUhEU"    
+// }
+//
+
+async function uploadImageToFtp(req: Request): Promise<Response> {
+    try {
+        console.log("---> Upload Image to FTP <---");
+
+        const encoded = await req.text();
+        const payload = decodeURIComponent(encoded);
+
+        let jsonObj: {
+            base64: string;
+            prefix_name?: string;
+        };
+
+        try {
+            jsonObj = JSON.parse(payload);
+
+            if (!jsonObj.base64) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    message: "Missing 'base64' field"
+                }), { status: 400, headers: responseHeader });
+            }
+
+            const matches = jsonObj.base64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+            if (!matches || matches.length !== 3) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    message: "Invalid base64 format"
+                }), { status: 400, headers: responseHeader });
+            }
+
+            const [, type, data] = matches;
+            const prefixName = jsonObj.prefix_name || "image";
+            const date = new Date();
+            const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
+
+            const filename = `${prefixName}-${dateString}.${type}`;
+            const buffer = Buffer.from(data, "base64");
+
+            const ftpResult = await uploadToFtp(buffer, filename);
+
+            return new Response(JSON.stringify({
+                success: ftpResult.success,
+                message: ftpResult.message,
+                public_url: ftpResult.url
+            }), {
+                status: ftpResult.success ? 200 : 500,
+                headers: responseHeader
+            });
+
+        } catch (parseError: any) {
+            return new Response(JSON.stringify({
+                success: false,
+                message: `Parse error: ${parseError.message}`
+            }), { status: 400, headers: responseHeader });
+        }
+
+    } catch (error: any) {
+        logErrorToFile(error);
+        return new Response(JSON.stringify({
+            success: false,
+            message: `FTP upload failed: ${error.message}`
+        }), { status: 500, headers: responseHeader });
+    }
+}
+
 
 const responseHeader = {
     "Content-Type": "application/json",
@@ -177,7 +532,73 @@ async function handleRequest(req: Request): Promise<Response> {
 
     } else if (req.method === "POST" && pathname === "/upload") {
         return uploadImage(req, SAVE_PATH);
-    } else {
+    } else if (req.method === "POST" && pathname === "/upload_ftp") {
+        return uploadImageToFtp(req);
+    } else if (req.method === "GET" && pathname === "/config") {
+        // Get current configuration
+        const currentConfig = getCurrentConfig();
+        return new Response(JSON.stringify({
+            success: true,
+            config: currentConfig
+        }), {
+            status: 200,
+            headers: responseHeader
+        });
+    } else if (req.method === "POST" && pathname === "/config/reset") {
+        // Reset config to default values
+        try {
+            resetConfigToDefault();
+            return new Response(JSON.stringify({
+                success: true,
+                message: "Config has been reset to default values"
+            }), {
+                status: 200,
+                headers: responseHeader
+            });
+        } catch (error: any) {
+            return new Response(JSON.stringify({
+                success: false,
+                message: `Failed to reset config: ${error.message}`
+            }), {
+                status: 500,
+                headers: responseHeader
+            });
+        }
+    } else if (req.method === "POST" && pathname === "/config/update") {
+        // Update specific config value
+        try {
+            const body = await req.json();
+            const { key, value } = body;
+
+            if (!key || value === undefined) {
+                return new Response(JSON.stringify({
+                    success: false,
+                    message: "Missing 'key' or 'value' in request body"
+                }), {
+                    status: 400,
+                    headers: responseHeader
+                });
+            }
+
+            const success = updateConfigValue(key, value);
+            return new Response(JSON.stringify({
+                success,
+                message: success ? `Updated ${key} to ${value}` : `Failed to update ${key}`
+            }), {
+                status: success ? 200 : 500,
+                headers: responseHeader
+            });
+        } catch (error: any) {
+            return new Response(JSON.stringify({
+                success: false,
+                message: `Failed to update config: ${error.message}`
+            }), {
+                status: 500,
+                headers: responseHeader
+            });
+        }
+    }
+    else {
         return new Response(JSON.stringify({ success: false, message: "CANNOT GET: The requested resource was not found" }), { status: 404, headers: responseHeader });
     }
 }
