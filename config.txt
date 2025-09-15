@@ -1,8 +1,9 @@
 # Image Receiver Server Configuration
-# Generated on 2025-09-13T13:21:05.442Z
+# Generated on 2025-09-15T02:34:37.550Z
 
 # Basic Configuration
-SAVE_PATH="/Users/draftsama/Works/backend/image-receiver-server/SAVE_IMAGES"
+SAVE_PATH="/Users/draftsama/Desktop/Signature/Display"
+PRINT_PATH="/Users/draftsama/Desktop/Signature/Print"
 PORT=34213
 API_KEY="tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs"
 

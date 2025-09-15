@@ -6,6 +6,7 @@ import path from "path";
 // Configuration interface
 interface Config {
     SAVE_PATH: string;
+    PRINT_PATH: string;
     PORT: number;
     API_KEY?: string;
     FTP_HOST?: string;
@@ -20,6 +21,7 @@ interface Config {
 // Default configuration values
 const DEFAULT_CONFIG: Config = {
     SAVE_PATH: path.resolve('./SAVE_IMAGES'),
+    PRINT_PATH: path.resolve('./PRINT_IMAGES'),
     PORT: 5555,
     API_KEY: "tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs",
     FTP_HOST: undefined,
@@ -39,6 +41,7 @@ const AP_KEY = DEFAULT_CONFIG.API_KEY;
 createDefaultConfig();
 const configs = parseConfigFile();
 const SAVE_PATH = ensureSavePath(configs.SAVE_PATH || DEFAULT_CONFIG.SAVE_PATH);
+const PRINT_PATH = ensurePrintPath(configs.PRINT_PATH || DEFAULT_CONFIG.PRINT_PATH);
 const port = configs.PORT || DEFAULT_CONFIG.PORT;
 
 // Check if error log file exists and clear it if not
@@ -82,6 +85,7 @@ function createDefaultConfig(): void {
         console.log("---> Create a default config file");
         const defaultConfigString = [
             `SAVE_PATH="${DEFAULT_CONFIG.SAVE_PATH}"`,
+            `PRINT_PATH="${DEFAULT_CONFIG.PRINT_PATH}"`,
             `PORT=${DEFAULT_CONFIG.PORT}`,
             `API_KEY="${DEFAULT_CONFIG.API_KEY}"`,
             `# FTP Configuration (uncomment to enable)`,
@@ -109,10 +113,22 @@ function ensureSavePath(savePath: string): string {
     if (!fs.existsSync(savePath)) {
         console.log("---> 'SAVE_PATH' Directory not exist");
         fs.mkdirSync(savePath, { recursive: true });
-        console.log("---> Create a default save images directory");
+        console.log(`---> Create a default save images directory at ${savePath}`);
     }
     return savePath;
 }
+
+//ensure the print path exists
+function ensurePrintPath(printPath: string): string {
+    if (!fs.existsSync(printPath)) {
+        console.log("---> 'PRINT_PATH' Directory not exist");
+        fs.mkdirSync(printPath, { recursive: true });
+        console.log(`---> Create a default print images directory at ${printPath}`);
+    }
+    return printPath;
+}
+
+
 
 // Function to get current configuration
 function getCurrentConfig(): Config {
@@ -198,6 +214,7 @@ function validateAndFixConfig(): Config {
     // Check for missing values and set defaults
     const finalConfig: Config = {
         SAVE_PATH: configData.SAVE_PATH || DEFAULT_CONFIG.SAVE_PATH,
+        PRINT_PATH: configData.PRINT_PATH || DEFAULT_CONFIG.PRINT_PATH,
         PORT: configData.PORT || DEFAULT_CONFIG.PORT,
         API_KEY: configData.API_KEY || DEFAULT_CONFIG.API_KEY,
         FTP_HOST: configData.FTP_HOST || DEFAULT_CONFIG.FTP_HOST,
@@ -235,6 +252,7 @@ function writeCompleteConfigFile(config: Config): void {
         ``,
         `# Basic Configuration`,
         `SAVE_PATH="${config.SAVE_PATH}"`,
+        `PRINT_PATH="${config.PRINT_PATH}"`,
         `PORT=${config.PORT}`,
         `API_KEY="${config.API_KEY}"`,
         ``,
@@ -256,7 +274,7 @@ function writeCompleteConfigFile(config: Config): void {
         configLines.push(`# FTP_PASSWORD="your_password"`);
         configLines.push(`# FTP_REMOTE_PATH="${DEFAULT_CONFIG.FTP_REMOTE_PATH}"`);
         configLines.push(`# FTP_SECURE=${DEFAULT_CONFIG.FTP_SECURE}`);
-        configLines.push(`# FTP_DIRECTORY="subfolder"  # Optional: directory name or path`);
+        configLines.push(`# FTP_DIRECTORY="subfolder"`);
     }
 
     configLines.push('');
@@ -266,13 +284,13 @@ function writeCompleteConfigFile(config: Config): void {
 }
 
 // Upload image in base64 format
-async function uploadImage(req: Request, savePath: string): Promise<Response> {
+async function uploadImage(req: Request, savePath: string, printPath: string): Promise<Response> {
     try {
-        console.log("---> Upload Image <---");
+        console.log("--- Upload Image ---");
         const encoded = await req.text();
         const payload = decodeURIComponent(encoded);
 
-        let jsonObj: { base64: string; prefix_name?: string, folder?: string, enable_ftp?: boolean };
+        let jsonObj: { base64: string; prefix_name?: string, folder?: string, ftp?: boolean , print?: boolean};
 
 
 
@@ -287,11 +305,16 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
             return new Response(JSON.stringify({ success: false, message: "Invalid base64 format" }), { status: 400, headers: responseHeader });
         }
 
-        if (jsonObj.folder) {
-            savePath = path.join(savePath, jsonObj.folder);
-            if (!
-                fs.existsSync(savePath)) {
-                fs.mkdirSync(savePath, { recursive: true });
+        // Determine the target path based on print flag
+        let targetPath = savePath;
+        if (jsonObj.print) {
+            // If print is true, use printPath and ignore folder
+            targetPath = printPath;
+        } else if (jsonObj.folder) {
+            // If print is false and folder is specified, use folder with savePath
+            targetPath = path.join(savePath, jsonObj.folder);
+            if (!fs.existsSync(targetPath)) {
+                fs.mkdirSync(targetPath, { recursive: true });
             }
         }
 
@@ -303,13 +326,17 @@ async function uploadImage(req: Request, savePath: string): Promise<Response> {
         const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
         const filename = `${prefixName}-${dateString}.${type}`;
         const buffer = Buffer.from(data, "base64");
-        const filePath = path.join(savePath, filename);
+        const filePath = path.join(targetPath, filename);
 
         fs.writeFileSync(filePath, new Uint8Array(buffer));
-        console.log("---> Save image to : ", filePath);
+        if(jsonObj.print){
+            console.log("---> Save image to PRINT_PATH: ", filePath);
+        } else {
+            console.log("---> Save image to SAVE_PATH: ", filePath);
+        }
 
         // Check if FTP upload is enabled
-        if (jsonObj.enable_ftp) {
+        if (jsonObj.ftp) {
             const ftpResult = await uploadToFtp(buffer, filename);
             if (ftpResult.success) {
                 return new Response(
@@ -531,7 +558,7 @@ async function handleRequest(req: Request): Promise<Response> {
         });
 
     } else if (req.method === "POST" && pathname === "/upload") {
-        return uploadImage(req, SAVE_PATH);
+        return uploadImage(req, SAVE_PATH, PRINT_PATH);
     } else if (req.method === "POST" && pathname === "/upload_ftp") {
         return uploadImageToFtp(req);
     } else if (req.method === "GET" && pathname === "/config") {
@@ -606,6 +633,7 @@ async function handleRequest(req: Request): Promise<Response> {
 // Initialization
 try {
     console.log("---> Save Image Folder : ", SAVE_PATH);
+    console.log("---> Print Image Folder : ", PRINT_PATH);
 
     const server = serve({
         fetch: handleRequest,
