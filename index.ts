@@ -361,7 +361,7 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         }
 
         return new Response(
-            JSON.stringify({ success: true, message: "Image uploaded successfully", path: filePath }),
+            JSON.stringify({ success: true, message: "Image uploaded successfully", local_path: filePath }),
             { status: 200, headers: responseHeader }
         );
     } catch (e: any) {
@@ -517,6 +517,121 @@ async function uploadImageToFtp(req: Request): Promise<Response> {
     }
 }
 
+// Upload file endpoint (handles multipart/form-data)
+async function uploadFile(req: Request): Promise<Response> {
+    try {
+        console.log("--- Upload File ---");
+        
+        const formData = await req.formData();
+        const file = formData.get('file') as File;
+        const folder = formData.get('folder') as string;
+        const print = formData.get('print') === 'true';
+        const ftp = formData.get('ftp') === 'true';
+        
+        if (!file) {
+            return new Response(JSON.stringify({ 
+                success: false, 
+                message: "No file provided" 
+            }), { 
+                status: 400, 
+                headers: responseHeader 
+            });
+        }
+
+        // Accept all file types - no restriction
+        console.log(`---> Uploading file: ${file.name} (${file.type || 'unknown type'}, ${file.size} bytes)`);
+
+        // Determine target path
+        let targetPath = SAVE_PATH;
+        if (print) {
+            targetPath = PRINT_PATH;
+        } else if (folder) {
+            targetPath = path.join(SAVE_PATH, folder);
+            if (!fs.existsSync(targetPath)) {
+                fs.mkdirSync(targetPath, { recursive: true });
+            }
+        }
+
+        // Generate filename
+        const date = new Date();
+        const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
+        const fileExtension = path.extname(file.name) || '';
+        const baseName = path.basename(file.name, fileExtension) || 'file';
+        const filename = `${baseName}-${dateString}${fileExtension}`;
+        
+        // Save file
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const filePath = path.join(targetPath, filename);
+        
+        fs.writeFileSync(filePath, new Uint8Array(buffer));
+        
+        if (print) {
+            console.log("---> Save file to PRINT_PATH: ", filePath);
+        } else {
+            console.log("---> Save file to SAVE_PATH: ", filePath);
+        }
+
+        // Handle FTP upload if requested
+        if (ftp) {
+            const ftpResult = await uploadToFtp(buffer, filename);
+            if (ftpResult.success) {
+                return new Response(JSON.stringify({
+                    success: true,
+                    message: "File uploaded successfully to both local and FTP",
+                    local_path: filePath,
+                    public_url: ftpResult.url,
+                    file_info: {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type
+                    }
+                }), { 
+                    status: 200, 
+                    headers: responseHeader 
+                });
+            } else {
+                return new Response(JSON.stringify({
+                    success: true,
+                    message: `File uploaded locally but FTP upload failed: ${ftpResult.message}`,
+                    local_path: filePath,
+                    file_info: {
+                        name: file.name,
+                        size: file.size,
+                        type: file.type
+                    }
+                }), { 
+                    status: 200, 
+                    headers: responseHeader 
+                });
+            }
+        }
+
+        return new Response(JSON.stringify({
+            success: true,
+            message: "File uploaded successfully",
+            local_path: filePath,
+            file_info: {
+                name: file.name,
+                size: file.size,
+                type: file.type
+            }
+        }), { 
+            status: 200, 
+            headers: responseHeader 
+        });
+
+    } catch (e: any) {
+        logErrorToFile(e);
+        return new Response(JSON.stringify({ 
+            success: false, 
+            message: e.message 
+        }), { 
+            status: 400, 
+            headers: responseHeader 
+        });
+    }
+}
+
 
 const responseHeader = {
     "Content-Type": "application/json",
@@ -557,9 +672,13 @@ async function handleRequest(req: Request): Promise<Response> {
             headers: responseHeader
         });
 
-    } else if (req.method === "POST" && pathname === "/upload") {
+    } else if (req.method === "POST" && pathname === "/upload_image") {
         return uploadImage(req, SAVE_PATH, PRINT_PATH);
-    } else if (req.method === "POST" && pathname === "/upload_ftp") {
+    }
+    else if (req.method === "POST" && pathname === "/upload_file") {
+        return uploadFile(req);
+    }
+    else if (req.method === "POST" && pathname === "/upload_image_ftp") {
         return uploadImageToFtp(req);
     } else if (req.method === "GET" && pathname === "/config") {
         // Get current configuration
