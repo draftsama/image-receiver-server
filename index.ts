@@ -290,7 +290,7 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         const encoded = await req.text();
         const payload = decodeURIComponent(encoded);
 
-        let jsonObj: { base64: string; prefix_name?: string, folder?: string, ftp?: boolean , print?: boolean};
+        let jsonObj: { base64: string; prefix_name?: string, folder?: string, ftp?: boolean, print?: boolean };
 
 
 
@@ -329,7 +329,7 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         const filePath = path.join(targetPath, filename);
 
         fs.writeFileSync(filePath, new Uint8Array(buffer));
-        if(jsonObj.print){
+        if (jsonObj.print) {
             console.log("---> Save image to PRINT_PATH: ", filePath);
         } else {
             console.log("---> Save image to SAVE_PATH: ", filePath);
@@ -521,20 +521,25 @@ async function uploadImageToFtp(req: Request): Promise<Response> {
 async function uploadFile(req: Request): Promise<Response> {
     try {
         console.log("--- Upload File ---");
-        
+
+
+    
+
         const formData = await req.formData();
         const file = formData.get('file') as File;
         const folder = formData.get('folder') as string;
         const print = formData.get('print') === 'true';
         const ftp = formData.get('ftp') === 'true';
-        
+        const prefix_name = formData.get('prefix_name') as string;
+
+
         if (!file) {
-            return new Response(JSON.stringify({ 
-                success: false, 
-                message: "No file provided" 
-            }), { 
-                status: 400, 
-                headers: responseHeader 
+            return new Response(JSON.stringify({
+                success: false,
+                message: "No file provided"
+            }), {
+                status: 400,
+                headers: responseHeader
             });
         }
 
@@ -556,15 +561,15 @@ async function uploadFile(req: Request): Promise<Response> {
         const date = new Date();
         const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
         const fileExtension = path.extname(file.name) || '';
-        const baseName = path.basename(file.name, fileExtension) || 'file';
+        const baseName = prefix_name || path.basename(file.name, fileExtension) || 'file';
         const filename = `${baseName}-${dateString}${fileExtension}`;
-        
+
         // Save file
         const buffer = Buffer.from(await file.arrayBuffer());
         const filePath = path.join(targetPath, filename);
-        
+
         fs.writeFileSync(filePath, new Uint8Array(buffer));
-        
+
         if (print) {
             console.log("---> Save file to PRINT_PATH: ", filePath);
         } else {
@@ -585,9 +590,9 @@ async function uploadFile(req: Request): Promise<Response> {
                         size: file.size,
                         type: file.type
                     }
-                }), { 
-                    status: 200, 
-                    headers: responseHeader 
+                }), {
+                    status: 200,
+                    headers: responseHeader
                 });
             } else {
                 return new Response(JSON.stringify({
@@ -599,9 +604,9 @@ async function uploadFile(req: Request): Promise<Response> {
                         size: file.size,
                         type: file.type
                     }
-                }), { 
-                    status: 200, 
-                    headers: responseHeader 
+                }), {
+                    status: 200,
+                    headers: responseHeader
                 });
             }
         }
@@ -615,19 +620,19 @@ async function uploadFile(req: Request): Promise<Response> {
                 size: file.size,
                 type: file.type
             }
-        }), { 
-            status: 200, 
-            headers: responseHeader 
+        }), {
+            status: 200,
+            headers: responseHeader
         });
 
     } catch (e: any) {
         logErrorToFile(e);
-        return new Response(JSON.stringify({ 
-            success: false, 
-            message: e.message 
-        }), { 
-            status: 400, 
-            headers: responseHeader 
+        return new Response(JSON.stringify({
+            success: false,
+            message: e.message
+        }), {
+            status: 400,
+            headers: responseHeader
         });
     }
 }
