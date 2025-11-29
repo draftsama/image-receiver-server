@@ -34,6 +34,8 @@ const DEFAULT_CONFIG: Config = {
 };
 
 // Constants
+const VERSION = "Dev";
+
 const CONFIG_PATH = path.resolve('./config.txt');
 const ERROR_LOG_PATH = path.resolve('./error.log');
 const AP_KEY = DEFAULT_CONFIG.API_KEY;
@@ -768,7 +770,7 @@ try {
     const ip = require('ip').address();
 
 
-    console.log('---> Server is running on ' + ip + ':' + port);
+    console.log('---> Server version ' + VERSION + ' is running on ' + ip + ':' + port);
 } catch (e: any) {
     logErrorToFile(e);
     process.exit(1);
