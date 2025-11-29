@@ -572,6 +572,19 @@ async function uploadFile(req: Request): Promise<Response> {
 
         fs.writeFileSync(filePath, new Uint8Array(buffer));
 
+        //log check file is real exist
+
+        var isExist = fs.existsSync(filePath);
+        if (!isExist) {
+            return new Response(JSON.stringify({
+                success: false,
+                message: "File save failed"
+            }), {
+                status: 500,
+                headers: responseHeader
+            });
+        }
+
         if (print) {
             console.log("---> Save file to PRINT_PATH: ", filePath);
         } else {
