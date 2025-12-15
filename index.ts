@@ -2,6 +2,7 @@ import { serve } from "bun";
 import { log } from "console";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
 
 // Configuration interface
 interface Config {
@@ -57,6 +58,27 @@ function logErrorToFile(error: Error | string): void {
     const errorMessage = `[${timestamp}] ${error instanceof Error ? error.stack : error}\n\n`;
     fs.appendFileSync(ERROR_LOG_PATH, errorMessage, 'utf8');
     console.error(errorMessage); // Log the error message to the console as well
+}
+
+// Function to get client identifier from IP and User-Agent
+function getClientIdentifier(req: Request): string {
+    // Get IP from headers
+    const forwardedFor = req.headers.get('x-forwarded-for');
+    const realIp = req.headers.get('x-real-ip');
+    const cfConnectingIp = req.headers.get('cf-connecting-ip');
+    const ip = cfConnectingIp || realIp || forwardedFor?.split(',')[0].trim() || 'unknown';
+    
+    // Get User-Agent
+    const userAgent = req.headers.get('user-agent') || 'unknown';
+    
+    // Create hash from IP + User-Agent for privacy and shorter string
+    const hash = crypto
+        .createHash('sha256')
+        .update(`${ip}-${userAgent}`)
+        .digest('hex')
+        .substring(0, 12);
+    
+    return hash;
 }
 
 // Handle uncaught exceptions and unhandled rejections
@@ -307,6 +329,9 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
             return new Response(JSON.stringify({ success: false, message: "Invalid base64 format" }), { status: 400, headers: responseHeader });
         }
 
+        // Get client identifier
+        const clientId = getClientIdentifier(req);
+        
         // Determine the target path based on print flag
         let targetPath = savePath;
         if (jsonObj.print) {
@@ -314,7 +339,9 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
             targetPath = printPath;
         } else if (jsonObj.folder) {
             // If print is false and folder is specified, use folder with savePath
-            targetPath = path.join(savePath, jsonObj.folder);
+            // Append client identifier to folder name
+            const folderWithClient = `${jsonObj.folder}_${clientId}`;
+            targetPath = path.join(savePath, folderWithClient);
             if (!fs.existsSync(targetPath)) {
                 fs.mkdirSync(targetPath, { recursive: true });
             }
@@ -525,7 +552,6 @@ async function uploadFile(req: Request): Promise<Response> {
         console.log("--- Upload File ---");
 
 
-    
 
         const formData = await req.formData();
         const file = formData.get('file') as File;
@@ -548,12 +574,17 @@ async function uploadFile(req: Request): Promise<Response> {
         // Accept all file types - no restriction
         console.log(`---> Uploading file: ${file.name} (${file.type || 'unknown type'}, ${file.size} bytes)`);
 
+        // Get client identifier
+        const clientId = getClientIdentifier(req);
+        
         // Determine target path
         let targetPath = SAVE_PATH;
         if (print) {
             targetPath = PRINT_PATH;
         } else if (folder) {
-            targetPath = path.join(SAVE_PATH, folder);
+            // Append client identifier to folder name
+            const folderWithClient = `${folder}_${clientId}`;
+            targetPath = path.join(SAVE_PATH, folderWithClient);
             if (!fs.existsSync(targetPath)) {
                 fs.mkdirSync(targetPath, { recursive: true });
             }
