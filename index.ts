@@ -1,8 +1,23 @@
 import { serve } from "bun";
 import { log } from "console";
 import fs from "fs";
+import { promises as fsPromises } from "fs";
 import path from "path";
 import crypto from "crypto";
+
+// Constants - Magic Numbers
+const MAX_FILE_SIZE_MB = 50; // Maximum file size in MB
+const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const MAX_LOG_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+const MAX_LOG_BACKUPS = 5;
+const FTP_POOL_SIZE = 5;
+const FTP_CONNECTION_TIMEOUT = 30000; // 30 seconds
+const HTTP_STATUS_OK = 200;
+const HTTP_STATUS_BAD_REQUEST = 400;
+const HTTP_STATUS_UNAUTHORIZED = 401;
+const HTTP_STATUS_NOT_FOUND = 404;
+const HTTP_STATUS_SERVER_ERROR = 500;
+const CLIENT_ID_HASH_LENGTH = 12;
 
 // Configuration interface
 interface Config {
@@ -10,6 +25,7 @@ interface Config {
     PRINT_PATH: string;
     PORT: number;
     API_KEY?: string;
+    MAX_FILE_SIZE_MB?: number;
     FTP_HOST?: string;
     FTP_PORT?: number;
     FTP_USERNAME?: string;
@@ -25,6 +41,7 @@ const DEFAULT_CONFIG: Config = {
     PRINT_PATH: path.resolve('./PRINT_IMAGES'),
     PORT: 5555,
     API_KEY: "tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs",
+    MAX_FILE_SIZE_MB: MAX_FILE_SIZE_MB,
     FTP_HOST: undefined,
     FTP_PORT: 21,
     FTP_USERNAME: undefined,
@@ -47,17 +64,69 @@ const SAVE_PATH = ensureSavePath(configs.SAVE_PATH || DEFAULT_CONFIG.SAVE_PATH);
 const PRINT_PATH = ensurePrintPath(configs.PRINT_PATH || DEFAULT_CONFIG.PRINT_PATH);
 const port = configs.PORT || DEFAULT_CONFIG.PORT;
 
-// Check if error log file exists and clear it if not
-if (!fs.existsSync(ERROR_LOG_PATH)) {
-    fs.writeFileSync(ERROR_LOG_PATH, '');
+// Initialize error log file
+async function initializeErrorLog(): Promise<void> {
+    try {
+        await fsPromises.access(ERROR_LOG_PATH);
+    } catch {
+        await fsPromises.writeFile(ERROR_LOG_PATH, '');
+    }
 }
 
-// Log errors to a file
-function logErrorToFile(error: Error | string): void {
+// Rotate log file if it exceeds max size
+async function rotateLogFile(): Promise<void> {
+    try {
+        const stats = await fsPromises.stat(ERROR_LOG_PATH);
+        if (stats.size >= MAX_LOG_SIZE_BYTES) {
+            // Rotate existing backups
+            for (let i = MAX_LOG_BACKUPS - 1; i > 0; i--) {
+                const oldPath = `${ERROR_LOG_PATH}.${i}`;
+                const newPath = `${ERROR_LOG_PATH}.${i + 1}`;
+                try {
+                    await fsPromises.rename(oldPath, newPath);
+                } catch { /* Ignore if file doesn't exist */ }
+            }
+            // Move current log to .1
+            await fsPromises.rename(ERROR_LOG_PATH, `${ERROR_LOG_PATH}.1`);
+            await fsPromises.writeFile(ERROR_LOG_PATH, '');
+            console.log('---> Log file rotated');
+        }
+    } catch (error) {
+        console.error('Failed to rotate log:', error);
+    }
+}
+
+// Log errors to a file with rotation
+async function logErrorToFile(error: Error | string): Promise<void> {
     const timestamp = new Date().toISOString();
     const errorMessage = `[${timestamp}] ${error instanceof Error ? error.stack : error}\n\n`;
-    fs.appendFileSync(ERROR_LOG_PATH, errorMessage, 'utf8');
-    console.error(errorMessage); // Log the error message to the console as well
+    
+    await rotateLogFile();
+    await fsPromises.appendFile(ERROR_LOG_PATH, errorMessage, 'utf8');
+    console.error(errorMessage);
+}
+
+// Response header function
+function getResponseHeaders(): HeadersInit {
+    return {
+        "Content-Type": "application/json",
+    };
+}
+
+// Consistent error response helper
+function createErrorResponse(message: string, status: number = HTTP_STATUS_BAD_REQUEST): Response {
+    return new Response(
+        JSON.stringify({ success: false, message }),
+        { status, headers: getResponseHeaders() }
+    );
+}
+
+// Consistent success response helper
+function createSuccessResponse(data: any, status: number = HTTP_STATUS_OK): Response {
+    return new Response(
+        JSON.stringify({ success: true, ...data }),
+        { status, headers: getResponseHeaders() }
+    );
 }
 
 // Function to get client identifier from IP and User-Agent
@@ -76,7 +145,7 @@ function getClientIdentifier(req: Request): string {
         .createHash('sha256')
         .update(`${ip}-${userAgent}`)
         .digest('hex')
-        .substring(0, 12);
+        .substring(0, CLIENT_ID_HASH_LENGTH);
     
     return hash;
 }
@@ -92,13 +161,13 @@ process.on('unhandledRejection', (reason: unknown) => {
 });
 
 // Middleware to check the API key
-function checkApiKey(req: Request): any | null {
+function checkApiKey(req: Request): Response | null {
     const apiKey = req.headers.get('api-key');
     if (!apiKey) {
-        return new Response(JSON.stringify({ message: "Require api-key" }), { status: 401, headers: responseHeader });
+        return createErrorResponse("Require api-key", HTTP_STATUS_UNAUTHORIZED);
     }
     if (apiKey !== AP_KEY) {
-        return new Response(JSON.stringify({ message: "Unauthorized" }), { status: 401, headers: responseHeader });
+        return createErrorResponse("Unauthorized", HTTP_STATUS_UNAUTHORIZED);
     }
     return null;
 }
@@ -142,11 +211,35 @@ function ensureSavePath(savePath: string): string {
     return savePath;
 }
 
+// Async version of ensureSavePath
+async function ensureSavePathAsync(savePath: string): Promise<string> {
+    try {
+        await fsPromises.access(savePath);
+    } catch {
+        console.log("---> 'SAVE_PATH' Directory not exist");
+        await fsPromises.mkdir(savePath, { recursive: true });
+        console.log(`---> Create a default save images directory at ${savePath}`);
+    }
+    return savePath;
+}
+
 //ensure the print path exists
 function ensurePrintPath(printPath: string): string {
     if (!fs.existsSync(printPath)) {
         console.log("---> 'PRINT_PATH' Directory not exist");
         fs.mkdirSync(printPath, { recursive: true });
+        console.log(`---> Create a default print images directory at ${printPath}`);
+    }
+    return printPath;
+}
+
+// Async version of ensurePrintPath
+async function ensurePrintPathAsync(printPath: string): Promise<string> {
+    try {
+        await fsPromises.access(printPath);
+    } catch {
+        console.log("---> 'PRINT_PATH' Directory not exist");
+        await fsPromises.mkdir(printPath, { recursive: true });
         console.log(`---> Create a default print images directory at ${printPath}`);
     }
     return printPath;
@@ -221,6 +314,7 @@ function validateAndFixConfig(): Config {
             switch (cleanKey) {
                 case 'PORT':
                 case 'FTP_PORT':
+                case 'MAX_FILE_SIZE_MB':
                     configData[cleanKey] = Number(cleanValue);
                     break;
                 case 'FTP_SECURE':
@@ -241,6 +335,7 @@ function validateAndFixConfig(): Config {
         PRINT_PATH: configData.PRINT_PATH || DEFAULT_CONFIG.PRINT_PATH,
         PORT: configData.PORT || DEFAULT_CONFIG.PORT,
         API_KEY: configData.API_KEY || DEFAULT_CONFIG.API_KEY,
+        MAX_FILE_SIZE_MB: configData.MAX_FILE_SIZE_MB || DEFAULT_CONFIG.MAX_FILE_SIZE_MB,
         FTP_HOST: configData.FTP_HOST || DEFAULT_CONFIG.FTP_HOST,
         FTP_PORT: configData.FTP_PORT || DEFAULT_CONFIG.FTP_PORT,
         FTP_USERNAME: configData.FTP_USERNAME || DEFAULT_CONFIG.FTP_USERNAME,
@@ -279,6 +374,7 @@ function writeCompleteConfigFile(config: Config): void {
         `PRINT_PATH="${config.PRINT_PATH}"`,
         `PORT=${config.PORT}`,
         `API_KEY="${config.API_KEY}"`,
+        `MAX_FILE_SIZE_MB=${config.MAX_FILE_SIZE_MB}`,
         ``,
         `# FTP Configuration (uncomment and fill to enable FTP upload)`,
     ];
@@ -316,17 +412,14 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
 
         let jsonObj: { base64: string; prefix_name?: string, folder?: string, ftp?: boolean, print?: boolean };
 
-
-
         jsonObj = JSON.parse(payload);
         if (!jsonObj.base64) {
-
-            return new Response(JSON.stringify({ success: false, message: "Missing 'base64' field" }), { status: 400, headers: responseHeader });
+            return createErrorResponse("Missing 'base64' field", HTTP_STATUS_BAD_REQUEST);
         }
 
         const matches = jsonObj.base64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
         if (!matches || matches.length !== 3) {
-            return new Response(JSON.stringify({ success: false, message: "Invalid base64 format" }), { status: 400, headers: responseHeader });
+            return createErrorResponse("Invalid base64 format", HTTP_STATUS_BAD_REQUEST);
         }
 
         // Get client identifier
@@ -342,22 +435,31 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
             // Append client identifier to folder name
             const folderWithClient = `${jsonObj.folder}_${clientId}`;
             targetPath = path.join(savePath, folderWithClient);
-            if (!fs.existsSync(targetPath)) {
-                fs.mkdirSync(targetPath, { recursive: true });
+            try {
+                await fsPromises.access(targetPath);
+            } catch {
+                await fsPromises.mkdir(targetPath, { recursive: true });
             }
         }
 
 
         const [, type, data] = matches;
+        const buffer = Buffer.from(data, "base64");
+        
+        // Validate file size
+        const sizeValidation = validateFileSize(buffer.length);
+        if (!sizeValidation.valid) {
+            return createErrorResponse(sizeValidation.message!, HTTP_STATUS_BAD_REQUEST);
+        }
+        
         const prefixName = jsonObj.prefix_name || "image";
         //today format: 22_Dec_2025-22_00_00
         const date = new Date();
         const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
         const filename = `${prefixName}-${dateString}.${type}`;
-        const buffer = Buffer.from(data, "base64");
         const filePath = path.join(targetPath, filename);
 
-        fs.writeFileSync(filePath, new Uint8Array(buffer));
+        await fsPromises.writeFile(filePath, new Uint8Array(buffer));
         if (jsonObj.print) {
             console.log("---> Save image to PRINT_PATH: ", filePath);
         } else {
@@ -368,45 +470,97 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         if (jsonObj.ftp) {
             const ftpResult = await uploadToFtp(buffer, filename);
             if (ftpResult.success) {
-                return new Response(
-                    JSON.stringify({
-                        success: true,
-                        message: "Image uploaded successfully to both local and FTP",
-                        public_url: ftpResult.url
-                    }),
-                    { status: 200, headers: responseHeader }
-                );
+                return createSuccessResponse({
+                    message: "Image uploaded successfully to both local and FTP",
+                    public_url: ftpResult.url
+                });
             } else {
                 // Local upload succeeded but FTP failed
-                return new Response(
-                    JSON.stringify({
-                        success: true,
-                        message: `Image uploaded locally but FTP upload failed: ${ftpResult.message}`,
-                        local_path: filePath
-                    }),
-                    { status: 200, headers: responseHeader }
-                );
+                return createSuccessResponse({
+                    message: `Image uploaded locally but FTP upload failed: ${ftpResult.message}`,
+                    local_path: filePath
+                });
             }
         }
 
-        return new Response(
-            JSON.stringify({ success: true, message: "Image uploaded successfully", local_path: filePath }),
-            { status: 200, headers: responseHeader }
-        );
+        return createSuccessResponse({
+            message: "Image uploaded successfully",
+            local_path: filePath
+        });
     } catch (e: any) {
-        logErrorToFile(e);
-        return new Response(JSON.stringify({ success: false, message: e.message }), { status: 400, headers: responseHeader });
+        await logErrorToFile(e);
+        return createErrorResponse(e.message, HTTP_STATUS_BAD_REQUEST);
     }
 }
 
-// Shared FTP upload function
+// FTP Connection Pool
+class FTPConnectionPool {
+    private pool: any[] = [];
+    private activeConnections: number = 0;
+    private ftp = require('ftp');
+
+    async getConnection(): Promise<any> {
+        // Reuse existing connection from pool
+        if (this.pool.length > 0) {
+            const client = this.pool.pop();
+            this.activeConnections++;
+            return client;
+        }
+
+        // Create new connection if under pool size
+        if (this.activeConnections < FTP_POOL_SIZE) {
+            const client = new this.ftp();
+            this.activeConnections++;
+            return client;
+        }
+
+        // Wait for a connection to become available
+        return new Promise((resolve) => {
+            const interval = setInterval(() => {
+                if (this.pool.length > 0) {
+                    clearInterval(interval);
+                    const client = this.pool.pop();
+                    this.activeConnections++;
+                    resolve(client);
+                }
+            }, 100);
+        });
+    }
+
+    releaseConnection(client: any): void {
+        this.activeConnections--;
+        if (this.pool.length < FTP_POOL_SIZE) {
+            this.pool.push(client);
+        } else {
+            try {
+                client.end();
+            } catch { /* Ignore errors on connection close */ }
+        }
+    }
+
+    async closeAll(): Promise<void> {
+        for (const client of this.pool) {
+            try {
+                client.end();
+            } catch { /* Ignore errors */ }
+        }
+        this.pool = [];
+        this.activeConnections = 0;
+    }
+}
+
+const ftpPool = new FTPConnectionPool();
+
+// Shared FTP upload function with connection pooling
 async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success: boolean; message: string; url?: string }> {
-    const ftp = require('ftp');
-    const client = new ftp();
+    const client = await ftpPool.getConnection();
 
     return new Promise((resolve) => {
+        let timeoutHandle: NodeJS.Timeout;
+        
         try {
             if (!configs.FTP_HOST || !configs.FTP_PORT || !configs.FTP_USERNAME || !configs.FTP_PASSWORD) {
+                ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
                     message: "Missing FTP configuration in config file"
@@ -427,28 +581,42 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                 publicUrl = `https://${configs.FTP_HOST}/${filename}`;
             }
 
+            // Set connection timeout
+            timeoutHandle = setTimeout(() => {
+                client.destroy();
+                ftpPool.releaseConnection(client);
+                resolve({
+                    success: false,
+                    message: "FTP connection timeout"
+                });
+            }, FTP_CONNECTION_TIMEOUT);
+
             client.on('ready', () => {
                 client.put(buffer, remoteFilePath, (err: any) => {
+                    clearTimeout(timeoutHandle);
                     if (err) {
                         logErrorToFile(err);
+                        ftpPool.releaseConnection(client);
                         resolve({
                             success: false,
                             message: `FTP upload failed: ${err.message}`
                         });
                     } else {
                         console.log("---> Upload image to FTP: ", publicUrl);
+                        ftpPool.releaseConnection(client);
                         resolve({
                             success: true,
                             message: "Image uploaded to FTP successfully",
                             url: publicUrl
                         });
                     }
-                    client.end();
                 });
             });
 
             client.on('error', (err: any) => {
+                clearTimeout(timeoutHandle);
                 logErrorToFile(err);
+                ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
                     message: `FTP connection failed: ${err.message}`
@@ -460,11 +628,14 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                 port: configs.FTP_PORT,
                 user: configs.FTP_USERNAME,
                 password: configs.FTP_PASSWORD,
-                secure: configs.FTP_SECURE || false
+                secure: configs.FTP_SECURE || false,
+                connTimeout: FTP_CONNECTION_TIMEOUT
             });
 
         } catch (error: any) {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
             logErrorToFile(error);
+            ftpPool.releaseConnection(client);
             resolve({
                 success: false,
                 message: `FTP upload failed: ${error.message}`
@@ -473,6 +644,18 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
     });
 }
 
+
+// File size validation helper
+function validateFileSize(sizeInBytes: number): { valid: boolean; message?: string } {
+    const maxSize = (configs.MAX_FILE_SIZE_MB || MAX_FILE_SIZE_MB) * 1024 * 1024;
+    if (sizeInBytes > maxSize) {
+        return {
+            valid: false,
+            message: `File size exceeds maximum allowed size of ${configs.MAX_FILE_SIZE_MB || MAX_FILE_SIZE_MB}MB`
+        };
+    }
+    return { valid: true };
+}
 
 // Example payload for FTP upload
 // {
@@ -497,52 +680,46 @@ async function uploadImageToFtp(req: Request): Promise<Response> {
             jsonObj = JSON.parse(payload);
 
             if (!jsonObj.base64) {
-                return new Response(JSON.stringify({
-                    success: false,
-                    message: "Missing 'base64' field"
-                }), { status: 400, headers: responseHeader });
+                return createErrorResponse("Missing 'base64' field", HTTP_STATUS_BAD_REQUEST);
             }
 
             const matches = jsonObj.base64.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
             if (!matches || matches.length !== 3) {
-                return new Response(JSON.stringify({
-                    success: false,
-                    message: "Invalid base64 format"
-                }), { status: 400, headers: responseHeader });
+                return createErrorResponse("Invalid base64 format", HTTP_STATUS_BAD_REQUEST);
             }
 
             const [, type, data] = matches;
+            const buffer = Buffer.from(data, "base64");
+            
+            // Validate file size
+            const sizeValidation = validateFileSize(buffer.length);
+            if (!sizeValidation.valid) {
+                return createErrorResponse(sizeValidation.message!, HTTP_STATUS_BAD_REQUEST);
+            }
             const prefixName = jsonObj.prefix_name || "image";
             const date = new Date();
             const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
 
             const filename = `${prefixName}-${dateString}.${type}`;
-            const buffer = Buffer.from(data, "base64");
 
             const ftpResult = await uploadToFtp(buffer, filename);
 
-            return new Response(JSON.stringify({
-                success: ftpResult.success,
-                message: ftpResult.message,
-                public_url: ftpResult.url
-            }), {
-                status: ftpResult.success ? 200 : 500,
-                headers: responseHeader
-            });
+            if (ftpResult.success) {
+                return createSuccessResponse({
+                    message: ftpResult.message,
+                    public_url: ftpResult.url
+                });
+            } else {
+                return createErrorResponse(ftpResult.message, HTTP_STATUS_SERVER_ERROR);
+            }
 
         } catch (parseError: any) {
-            return new Response(JSON.stringify({
-                success: false,
-                message: `Parse error: ${parseError.message}`
-            }), { status: 400, headers: responseHeader });
+            return createErrorResponse(`Parse error: ${parseError.message}`, HTTP_STATUS_BAD_REQUEST);
         }
 
     } catch (error: any) {
-        logErrorToFile(error);
-        return new Response(JSON.stringify({
-            success: false,
-            message: `FTP upload failed: ${error.message}`
-        }), { status: 500, headers: responseHeader });
+        await logErrorToFile(error);
+        return createErrorResponse(`FTP upload failed: ${error.message}`, HTTP_STATUS_SERVER_ERROR);
     }
 }
 
@@ -551,8 +728,6 @@ async function uploadFile(req: Request): Promise<Response> {
     try {
         console.log("--- Upload File ---");
 
-
-
         const formData = await req.formData();
         const file = formData.get('file') as File;
         const folder = formData.get('folder') as string;
@@ -560,15 +735,14 @@ async function uploadFile(req: Request): Promise<Response> {
         const ftp = formData.get('ftp') === 'true';
         const prefix_name = formData.get('prefix_name') as string;
 
-
         if (!file) {
-            return new Response(JSON.stringify({
-                success: false,
-                message: "No file provided"
-            }), {
-                status: 400,
-                headers: responseHeader
-            });
+            return createErrorResponse("No file provided", HTTP_STATUS_BAD_REQUEST);
+        }
+        
+        // Validate file size
+        const sizeValidation = validateFileSize(file.size);
+        if (!sizeValidation.valid) {
+            return createErrorResponse(sizeValidation.message!, HTTP_STATUS_BAD_REQUEST);
         }
 
         // Accept all file types - no restriction
@@ -585,8 +759,10 @@ async function uploadFile(req: Request): Promise<Response> {
             // Append client identifier to folder name
             const folderWithClient = `${folder}_${clientId}`;
             targetPath = path.join(SAVE_PATH, folderWithClient);
-            if (!fs.existsSync(targetPath)) {
-                fs.mkdirSync(targetPath, { recursive: true });
+            try {
+                await fsPromises.access(targetPath);
+            } catch {
+                await fsPromises.mkdir(targetPath, { recursive: true });
             }
         }
 
@@ -601,19 +777,13 @@ async function uploadFile(req: Request): Promise<Response> {
         const buffer = Buffer.from(await file.arrayBuffer());
         const filePath = path.join(targetPath, filename);
 
-        fs.writeFileSync(filePath, new Uint8Array(buffer));
+        await fsPromises.writeFile(filePath, new Uint8Array(buffer));
 
-        //log check file is real exist
-
-        var isExist = fs.existsSync(filePath);
-        if (!isExist) {
-            return new Response(JSON.stringify({
-                success: false,
-                message: "File save failed"
-            }), {
-                status: 500,
-                headers: responseHeader
-            });
+        // Verify file was saved
+        try {
+            await fsPromises.access(filePath);
+        } catch {
+            return createErrorResponse("File save failed", HTTP_STATUS_SERVER_ERROR);
         }
 
         if (print) {
@@ -626,8 +796,7 @@ async function uploadFile(req: Request): Promise<Response> {
         if (ftp) {
             const ftpResult = await uploadToFtp(buffer, filename);
             if (ftpResult.success) {
-                return new Response(JSON.stringify({
-                    success: true,
+                return createSuccessResponse({
                     message: "File uploaded successfully to both local and FTP",
                     local_path: filePath,
                     public_url: ftpResult.url,
@@ -636,13 +805,9 @@ async function uploadFile(req: Request): Promise<Response> {
                         size: file.size,
                         type: file.type
                     }
-                }), {
-                    status: 200,
-                    headers: responseHeader
                 });
             } else {
-                return new Response(JSON.stringify({
-                    success: true,
+                return createSuccessResponse({
                     message: `File uploaded locally but FTP upload failed: ${ftpResult.message}`,
                     local_path: filePath,
                     file_info: {
@@ -650,15 +815,11 @@ async function uploadFile(req: Request): Promise<Response> {
                         size: file.size,
                         type: file.type
                     }
-                }), {
-                    status: 200,
-                    headers: responseHeader
                 });
             }
         }
 
-        return new Response(JSON.stringify({
-            success: true,
+        return createSuccessResponse({
             message: "File uploaded successfully",
             local_path: filePath,
             file_info: {
@@ -666,28 +827,13 @@ async function uploadFile(req: Request): Promise<Response> {
                 size: file.size,
                 type: file.type
             }
-        }), {
-            status: 200,
-            headers: responseHeader
         });
 
     } catch (e: any) {
-        logErrorToFile(e);
-        return new Response(JSON.stringify({
-            success: false,
-            message: e.message
-        }), {
-            status: 400,
-            headers: responseHeader
-        });
+        await logErrorToFile(e);
+        return createErrorResponse(e.message, HTTP_STATUS_BAD_REQUEST);
     }
 }
-
-
-const responseHeader = {
-    "Content-Type": "application/json",
-};
-
 
 // Handle incoming requests
 async function handleRequest(req: Request): Promise<Response> {
@@ -707,21 +853,9 @@ async function handleRequest(req: Request): Promise<Response> {
     // console.log("---> pathname: ", pathname);
 
     if (req.method === "GET" && pathname === "/check") {
-        return new Response(JSON.stringify({
-            success: true,
-            message: "Server is running"
-        }), {
-            status: 200,
-            headers: responseHeader
-        });
+        return createSuccessResponse({ message: "Server is running" });
     } else if (req.method === "GET" && pathname === "/save_path") {
-        return new Response(JSON.stringify({
-            success: true,
-            save_path: SAVE_PATH
-        }), {
-            status: 200,
-            headers: responseHeader
-        });
+        return createSuccessResponse({ save_path: SAVE_PATH });
 
     } else if (req.method === "POST" && pathname === "/upload_image") {
         return uploadImage(req, SAVE_PATH, PRINT_PATH);
@@ -734,32 +868,14 @@ async function handleRequest(req: Request): Promise<Response> {
     } else if (req.method === "GET" && pathname === "/config") {
         // Get current configuration
         const currentConfig = getCurrentConfig();
-        return new Response(JSON.stringify({
-            success: true,
-            config: currentConfig
-        }), {
-            status: 200,
-            headers: responseHeader
-        });
+        return createSuccessResponse({ config: currentConfig });
     } else if (req.method === "POST" && pathname === "/config/reset") {
         // Reset config to default values
         try {
             resetConfigToDefault();
-            return new Response(JSON.stringify({
-                success: true,
-                message: "Config has been reset to default values"
-            }), {
-                status: 200,
-                headers: responseHeader
-            });
+            return createSuccessResponse({ message: "Config has been reset to default values" });
         } catch (error: any) {
-            return new Response(JSON.stringify({
-                success: false,
-                message: `Failed to reset config: ${error.message}`
-            }), {
-                status: 500,
-                headers: responseHeader
-            });
+            return createErrorResponse(`Failed to reset config: ${error.message}`, HTTP_STATUS_SERVER_ERROR);
         }
     } else if (req.method === "POST" && pathname === "/config/update") {
         // Update specific config value
@@ -768,54 +884,53 @@ async function handleRequest(req: Request): Promise<Response> {
             const { key, value } = body;
 
             if (!key || value === undefined) {
-                return new Response(JSON.stringify({
-                    success: false,
-                    message: "Missing 'key' or 'value' in request body"
-                }), {
-                    status: 400,
-                    headers: responseHeader
-                });
+                return createErrorResponse("Missing 'key' or 'value' in request body", HTTP_STATUS_BAD_REQUEST);
             }
 
             const success = updateConfigValue(key, value);
-            return new Response(JSON.stringify({
-                success,
-                message: success ? `Updated ${key} to ${value}` : `Failed to update ${key}`
-            }), {
-                status: success ? 200 : 500,
-                headers: responseHeader
-            });
+            if (success) {
+                return createSuccessResponse({ message: `Updated ${key} to ${value}` });
+            } else {
+                return createErrorResponse(`Failed to update ${key}`, HTTP_STATUS_SERVER_ERROR);
+            }
         } catch (error: any) {
-            return new Response(JSON.stringify({
-                success: false,
-                message: `Failed to update config: ${error.message}`
-            }), {
-                status: 500,
-                headers: responseHeader
-            });
+            return createErrorResponse(`Failed to update config: ${error.message}`, HTTP_STATUS_SERVER_ERROR);
         }
     }
     else {
-        return new Response(JSON.stringify({ success: false, message: "CANNOT GET: The requested resource was not found" }), { status: 404, headers: responseHeader });
+        return createErrorResponse("CANNOT GET: The requested resource was not found", HTTP_STATUS_NOT_FOUND);
     }
 }
 
 // Initialization
-try {
-    console.log("---> Save Image Folder : ", SAVE_PATH);
-    console.log("---> Print Image Folder : ", PRINT_PATH);
+(async () => {
+    try {
+        // Initialize error log
+        await initializeErrorLog();
+        
+        console.log("---> Save Image Folder : ", SAVE_PATH);
+        console.log("---> Print Image Folder : ", PRINT_PATH);
+        console.log(`---> Max file size: ${configs.MAX_FILE_SIZE_MB || MAX_FILE_SIZE_MB}MB`);
 
-    const server = serve({
-        fetch: handleRequest,
-        port: port,
-    });
+        const server = serve({
+            fetch: handleRequest,
+            port: port,
+        });
 
-    //get ip address
-    const ip = require('ip').address();
+        //get ip address
+        const ip = require('ip').address();
 
-
-    console.log('---> Server version ' + VERSION + ' is running on ' + ip + ':' + port);
-} catch (e: any) {
-    logErrorToFile(e);
-    process.exit(1);
-}
+        console.log('---> Server version ' + VERSION + ' is running on ' + ip + ':' + port);
+        
+        // Cleanup on exit
+        process.on('SIGINT', async () => {
+            console.log('\n---> Shutting down server...');
+            await ftpPool.closeAll();
+            process.exit(0);
+        });
+        
+    } catch (e: any) {
+        await logErrorToFile(e);
+        process.exit(1);
+    }
+})();

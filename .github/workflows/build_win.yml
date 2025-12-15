@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
         run: bun install
@@ -25,8 +25,12 @@ jobs:
       - name: Get version from tag
         id: get_version
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $tag = "${{ github.ref_name }}"
+          $version = $tag -replace '^v', ''
+          $safe_version = $version -replace '\.', '-'
           echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+          echo "SAFE_VERSION=$safe_version" >> $env:GITHUB_OUTPUT
+          echo "TAG=$tag" >> $env:GITHUB_OUTPUT
         shell: pwsh
 
       - name: Update version in code
@@ -39,51 +43,52 @@ jobs:
       - name: Build Project
         run: bun run build_win_cert
 
-      - name: Remove existing zip (if any)
-        run: if (Test-Path "./dist/receiver-server.zip") { Remove-Item "./dist/receiver-server.zip" -Force }
+      - name: Rename and Zip Artifact
+        run: |
+          $safeVersion = "${{ steps.get_version.outputs.SAFE_VERSION }}"
+          $exeName = "receiver-server-$safeVersion.exe"
+          $zipName = "receiver-server-$safeVersion.zip"
+          
+          Move-Item -Path "./dist/receiver-server.exe" -Destination "./dist/$exeName"
+          
+          if (Test-Path "./dist/$zipName") { Remove-Item "./dist/$zipName" -Force }
+          
+          Compress-Archive -Path "./dist/$exeName" -DestinationPath "./dist/$zipName"
         shell: pwsh
-
-      - name: Zip artifact
-        run: 7z a -tzip ./dist/receiver-server.zip ./dist/receiver-server.exe
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: receiver-server
-          path: ./dist/receiver-server.zip
+          name: receiver-server-${{ steps.get_version.outputs.SAFE_VERSION }}
+          path: ./dist/receiver-server-${{ steps.get_version.outputs.SAFE_VERSION }}.zip
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: receiver-server
+          pattern: receiver-server-*
+          merge-multiple: true
           path: .
 
-      - name: Create GitHub Release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref }}
-          release_name: Release ${{ github.ref }}
-          draft: false
-          prerelease: false
-
-      - name: Set Upload URL
-        run: echo "UPLOAD_URL=${{ steps.create_release.outputs.upload_url }}" >> $GITHUB_ENV
+      - name: Get version from tag
+        id: get_version
+        run: |
+          tag="${{ github.ref_name }}"
+          version="${tag#v}"
+          safe_version="${version//./-}"
+          echo "SAFE_VERSION=$safe_version" >> $GITHUB_OUTPUT
         shell: bash
 
-      - name: Upload Release Asset
-        id: upload-release-asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          upload_url: ${{ env.UPLOAD_URL }}
-          asset_path: ./receiver-server.zip
-          asset_name: receiver-server.zip
-          asset_content_type: application/zip
+          files: receiver-server-${{ steps.get_version.outputs.SAFE_VERSION }}.zip
+          draft: false
+          prerelease: false

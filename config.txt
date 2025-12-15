@@ -1,11 +1,12 @@
 # Image Receiver Server Configuration
-# Generated on 2025-09-15T02:34:37.550Z
+# Generated on 2025-12-15T14:35:09.548Z
 
 # Basic Configuration
 SAVE_PATH="/Users/draftsama/Desktop/Signature/Display"
 PRINT_PATH="/Users/draftsama/Desktop/Signature/Print"
 PORT=34213
 API_KEY="tyI45KBNFS8hrGOdzjvwrG2c7J2odGVs"
+MAX_FILE_SIZE_MB=50
 
 # FTP Configuration (uncomment and fill to enable FTP upload)
 FTP_HOST="game.funplus.in.th"
