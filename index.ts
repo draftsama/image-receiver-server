@@ -771,7 +771,7 @@ async function uploadFile(req: Request): Promise<Response> {
         const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
         const fileExtension = path.extname(file.name) || '';
         const baseName = prefix_name || path.basename(file.name, fileExtension) || 'file';
-        const filename = `${baseName}-${dateString}${fileExtension}`;
+        const filename = `${baseName}_${clientId}_${dateString}${fileExtension}`;
 
         // Save file
         const buffer = Buffer.from(await file.arrayBuffer());
