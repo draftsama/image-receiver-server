@@ -500,13 +500,6 @@ class FTPConnectionPool {
     private ftp = require('ftp');
 
     async getConnection(): Promise<any> {
-        // Reuse existing connection from pool
-        if (this.pool.length > 0) {
-            const client = this.pool.pop();
-            this.activeConnections++;
-            return client;
-        }
-
         // Create new connection if under pool size
         if (this.activeConnections < FTP_POOL_SIZE) {
             const client = new this.ftp();
@@ -514,12 +507,12 @@ class FTPConnectionPool {
             return client;
         }
 
-        // Wait for a connection to become available
+        // Wait for a connection slot to become available
         return new Promise((resolve) => {
             const interval = setInterval(() => {
-                if (this.pool.length > 0) {
+                if (this.activeConnections < FTP_POOL_SIZE) {
                     clearInterval(interval);
-                    const client = this.pool.pop();
+                    const client = new this.ftp();
                     this.activeConnections++;
                     resolve(client);
                 }
@@ -527,11 +520,10 @@ class FTPConnectionPool {
         });
     }
 
-    releaseConnection(client: any): void {
+    releaseConnection(client: any, alreadyDestroyed: boolean = false): void {
         this.activeConnections--;
-        if (this.pool.length < FTP_POOL_SIZE) {
-            this.pool.push(client);
-        } else {
+        // Don't add back to pool since we're closing connections after each use
+        if (!alreadyDestroyed) {
             try {
                 client.end();
             } catch { /* Ignore errors on connection close */ }
@@ -539,11 +531,7 @@ class FTPConnectionPool {
     }
 
     async closeAll(): Promise<void> {
-        for (const client of this.pool) {
-            try {
-                client.end();
-            } catch { /* Ignore errors */ }
-        }
+        // No connections to close since we close them immediately after each use
         this.pool = [];
         this.activeConnections = 0;
     }
@@ -583,8 +571,8 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
 
             // Set connection timeout
             timeoutHandle = setTimeout(() => {
-                client.destroy();
-                ftpPool.releaseConnection(client);
+                client.destroy(); // Forcefully close the connection
+                ftpPool.releaseConnection(client, true); // Pass true to indicate already destroyed
                 resolve({
                     success: false,
                     message: "FTP connection timeout"
