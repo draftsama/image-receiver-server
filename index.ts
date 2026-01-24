@@ -520,12 +520,14 @@ class FTPConnectionPool {
         });
     }
 
-    releaseConnection(client: any): void {
+    releaseConnection(client: any, alreadyDestroyed: boolean = false): void {
         this.activeConnections--;
         // Don't add back to pool since we're closing connections after each use
-        try {
-            client.end();
-        } catch { /* Ignore errors on connection close */ }
+        if (!alreadyDestroyed) {
+            try {
+                client.end();
+            } catch { /* Ignore errors on connection close */ }
+        }
     }
 
     async closeAll(): Promise<void> {
@@ -570,7 +572,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
             // Set connection timeout
             timeoutHandle = setTimeout(() => {
                 client.destroy(); // Forcefully close the connection
-                ftpPool.releaseConnection(client);
+                ftpPool.releaseConnection(client, true); // Pass true to indicate already destroyed
                 resolve({
                     success: false,
                     message: "FTP connection timeout"
