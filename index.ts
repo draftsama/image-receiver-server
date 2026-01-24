@@ -500,13 +500,6 @@ class FTPConnectionPool {
     private ftp = require('ftp');
 
     async getConnection(): Promise<any> {
-        // Reuse existing connection from pool
-        if (this.pool.length > 0) {
-            const client = this.pool.pop();
-            this.activeConnections++;
-            return client;
-        }
-
         // Create new connection if under pool size
         if (this.activeConnections < FTP_POOL_SIZE) {
             const client = new this.ftp();
@@ -514,12 +507,12 @@ class FTPConnectionPool {
             return client;
         }
 
-        // Wait for a connection to become available
+        // Wait for a connection slot to become available
         return new Promise((resolve) => {
             const interval = setInterval(() => {
-                if (this.pool.length > 0) {
+                if (this.activeConnections < FTP_POOL_SIZE) {
                     clearInterval(interval);
-                    const client = this.pool.pop();
+                    const client = new this.ftp();
                     this.activeConnections++;
                     resolve(client);
                 }
@@ -529,13 +522,10 @@ class FTPConnectionPool {
 
     releaseConnection(client: any): void {
         this.activeConnections--;
-        if (this.pool.length < FTP_POOL_SIZE) {
-            this.pool.push(client);
-        } else {
-            try {
-                client.end();
-            } catch { /* Ignore errors on connection close */ }
-        }
+        // Don't add back to pool since we're closing connections after each use
+        try {
+            client.end();
+        } catch { /* Ignore errors on connection close */ }
     }
 
     async closeAll(): Promise<void> {
@@ -560,6 +550,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
         
         try {
             if (!configs.FTP_HOST || !configs.FTP_PORT || !configs.FTP_USERNAME || !configs.FTP_PASSWORD) {
+                client.end(); // Close the FTP connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -584,6 +575,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
             // Set connection timeout
             timeoutHandle = setTimeout(() => {
                 client.destroy();
+                client.end(); // Close the FTP connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -596,6 +588,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                     clearTimeout(timeoutHandle);
                     if (err) {
                         logErrorToFile(err);
+                        client.end(); // Close the FTP connection
                         ftpPool.releaseConnection(client);
                         resolve({
                             success: false,
@@ -603,6 +596,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                         });
                     } else {
                         console.log("---> Upload image to FTP: ", publicUrl);
+                        client.end(); // Close the FTP connection
                         ftpPool.releaseConnection(client);
                         resolve({
                             success: true,
@@ -616,6 +610,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
             client.on('error', (err: any) => {
                 clearTimeout(timeoutHandle);
                 logErrorToFile(err);
+                client.end(); // Close the FTP connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -635,6 +630,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
         } catch (error: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             logErrorToFile(error);
+            client.end(); // Close the FTP connection
             ftpPool.releaseConnection(client);
             resolve({
                 success: false,
