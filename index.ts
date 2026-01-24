@@ -529,11 +529,7 @@ class FTPConnectionPool {
     }
 
     async closeAll(): Promise<void> {
-        for (const client of this.pool) {
-            try {
-                client.end();
-            } catch { /* Ignore errors */ }
-        }
+        // No connections to close since we close them immediately after each use
         this.pool = [];
         this.activeConnections = 0;
     }
@@ -550,7 +546,6 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
         
         try {
             if (!configs.FTP_HOST || !configs.FTP_PORT || !configs.FTP_USERNAME || !configs.FTP_PASSWORD) {
-                client.end(); // Close the FTP connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -574,8 +569,7 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
 
             // Set connection timeout
             timeoutHandle = setTimeout(() => {
-                client.destroy();
-                client.end(); // Close the FTP connection
+                client.destroy(); // Forcefully close the connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -588,7 +582,6 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                     clearTimeout(timeoutHandle);
                     if (err) {
                         logErrorToFile(err);
-                        client.end(); // Close the FTP connection
                         ftpPool.releaseConnection(client);
                         resolve({
                             success: false,
@@ -596,7 +589,6 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
                         });
                     } else {
                         console.log("---> Upload image to FTP: ", publicUrl);
-                        client.end(); // Close the FTP connection
                         ftpPool.releaseConnection(client);
                         resolve({
                             success: true,
@@ -610,7 +602,6 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
             client.on('error', (err: any) => {
                 clearTimeout(timeoutHandle);
                 logErrorToFile(err);
-                client.end(); // Close the FTP connection
                 ftpPool.releaseConnection(client);
                 resolve({
                     success: false,
@@ -630,7 +621,6 @@ async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success:
         } catch (error: any) {
             if (timeoutHandle) clearTimeout(timeoutHandle);
             logErrorToFile(error);
-            client.end(); // Close the FTP connection
             ftpPool.releaseConnection(client);
             resolve({
                 success: false,
