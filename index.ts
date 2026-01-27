@@ -495,7 +495,6 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
 
 // FTP Connection Pool
 class FTPConnectionPool {
-    private pool: any[] = [];
     private activeConnections: number = 0;
     private ftp = require('ftp');
 
@@ -507,14 +506,19 @@ class FTPConnectionPool {
             return client;
         }
 
-        // Wait for a connection slot to become available
-        return new Promise((resolve) => {
+        // Wait for a connection slot to become available (with timeout)
+        return new Promise((resolve, reject) => {
+            const maxWaitTime = 30000; // 30 seconds
+            const startTime = Date.now();
             const interval = setInterval(() => {
                 if (this.activeConnections < FTP_POOL_SIZE) {
                     clearInterval(interval);
                     const client = new this.ftp();
                     this.activeConnections++;
                     resolve(client);
+                } else if (Date.now() - startTime > maxWaitTime) {
+                    clearInterval(interval);
+                    reject(new Error('Timeout waiting for FTP connection slot'));
                 }
             }, 100);
         });
@@ -532,7 +536,6 @@ class FTPConnectionPool {
 
     async closeAll(): Promise<void> {
         // No connections to close since we close them immediately after each use
-        this.pool = [];
         this.activeConnections = 0;
     }
 }
@@ -541,7 +544,15 @@ const ftpPool = new FTPConnectionPool();
 
 // Shared FTP upload function with connection pooling
 async function uploadToFtp(buffer: Buffer, filename: string): Promise<{ success: boolean; message: string; url?: string }> {
-    const client = await ftpPool.getConnection();
+    let client;
+    try {
+        client = await ftpPool.getConnection();
+    } catch (error: any) {
+        return {
+            success: false,
+            message: `Failed to get FTP connection: ${error.message}`
+        };
+    }
 
     return new Promise((resolve) => {
         let timeoutHandle: NodeJS.Timeout;
