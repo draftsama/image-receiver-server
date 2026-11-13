@@ -37,6 +37,9 @@ and stay invisible to the display until the client commits them.
    - `409` `{received: [...]}`: the count does not match. Re-send the missing files, then commit again.
    - `404`: nothing is staged for that folder from this client.
 
+`folder` and `prefix_name` must each be a single file name: at most 200 characters, no `/`, `\`,
+`..`, leading `.`, control characters, or `<>:"|?*`. Anything else is rejected with `400`.
+
 The commit must come from the same device (same IP and User-Agent) that sent the files.
 An upload with no new file for 30 minutes is moved to `SAVE_PATH/failed/`. It is never deleted.
 

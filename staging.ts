@@ -11,6 +11,20 @@ export type CommitResult =
     | { status: "incomplete"; received: string[] }
     | { status: "not_found" };
 
+/**
+ * True when `name` is safe to use as one path segment under SAVE_PATH: non-empty, no path
+ * separators or `..`, no leading dot (the display ignores dot-folders), and none of the
+ * characters Windows forbids in file names.
+ */
+export function isSafePathSegment(name: unknown): name is string {
+    return typeof name === "string"
+        && name.length > 0
+        && name.length <= 200
+        && !name.startsWith(".")
+        && !name.includes("..")
+        && !/[\\/<>:"|?*\x00-\x1f]/.test(name);
+}
+
 export function stagingPathFor(savePath: string, uploadName: string): string {
     return path.join(savePath, STAGING_FOLDER, uploadName);
 }

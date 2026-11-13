@@ -4,6 +4,7 @@ import os from "os";
 import path from "path";
 import {
     commitUpload,
+    isSafePathSegment,
     QUARANTINE_FOLDER,
     stagingPathFor,
     sweepStaleUploads,
@@ -92,5 +93,16 @@ describe("sweepStaleUploads", () => {
         expect(moved).toEqual(["old_c1"]);
         expect(await fs.readdir(path.join(savePath, QUARANTINE_FOLDER))).toEqual(["old_c1"]);
         expect(await fs.readdir(path.join(savePath, ".incoming"))).toEqual(["fresh_c2"]);
+    });
+});
+
+describe("isSafePathSegment", () => {
+    test("accepts a plain Content name, Thai included", () => {
+        for (const name of ["sig42", "vip_sig7_c2", "ลายเซ็น 01"]) expect(isSafePathSegment(name)).toBe(true);
+    });
+
+    test("rejects anything that could leave SAVE_PATH or hide from the display", () => {
+        for (const name of ["", "../x", "..", "a/b", "a\\b", ".incoming", "c:x", "a\u0000b", 42, null, "x".repeat(201)])
+            expect(isSafePathSegment(name)).toBe(false);
     });
 });
