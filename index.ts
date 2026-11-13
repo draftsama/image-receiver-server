@@ -4,6 +4,7 @@ import fs from "fs";
 import { promises as fsPromises } from "fs";
 import path from "path";
 import crypto from "crypto";
+import { commitUpload, stagingPathFor, sweepStaleUploads, writeFileAtomic } from "./staging";
 
 // Constants - Magic Numbers
 const MAX_FILE_SIZE_MB = 50; // Maximum file size in MB
@@ -16,8 +17,10 @@ const HTTP_STATUS_OK = 200;
 const HTTP_STATUS_BAD_REQUEST = 400;
 const HTTP_STATUS_UNAUTHORIZED = 401;
 const HTTP_STATUS_NOT_FOUND = 404;
+const HTTP_STATUS_CONFLICT = 409;
 const HTTP_STATUS_SERVER_ERROR = 500;
 const CLIENT_ID_HASH_LENGTH = 12;
+const STALE_SWEEP_INTERVAL_MS = 60 * 1000;
 
 // Configuration interface
 interface Config {
@@ -433,13 +436,8 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         } else if (jsonObj.folder) {
             // If print is false and folder is specified, use folder with savePath
             // Append client identifier to folder name
-            const folderWithClient = `${jsonObj.folder}_${clientId}`;
-            targetPath = path.join(savePath, folderWithClient);
-            try {
-                await fsPromises.access(targetPath);
-            } catch {
-                await fsPromises.mkdir(targetPath, { recursive: true });
-            }
+            targetPath = stagingPathFor(savePath, `${jsonObj.folder}_${clientId}`);
+            await fsPromises.mkdir(targetPath, { recursive: true });
         }
 
 
@@ -459,7 +457,7 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
         const filename = `${prefixName}-${dateString}.${type}`;
         const filePath = path.join(targetPath, filename);
 
-        await fsPromises.writeFile(filePath, new Uint8Array(buffer));
+        await writeFileAtomic(filePath, new Uint8Array(buffer));
         if (jsonObj.print) {
             console.log("---> Save image to PRINT_PATH: ", filePath);
         } else {
@@ -756,13 +754,8 @@ async function uploadFile(req: Request): Promise<Response> {
             targetPath = PRINT_PATH;
         } else if (folder) {
             // Append client identifier to folder name
-            const folderWithClient = `${folder}_${clientId}`;
-            targetPath = path.join(SAVE_PATH, folderWithClient);
-            try {
-                await fsPromises.access(targetPath);
-            } catch {
-                await fsPromises.mkdir(targetPath, { recursive: true });
-            }
+            targetPath = stagingPathFor(SAVE_PATH, `${folder}_${clientId}`);
+            await fsPromises.mkdir(targetPath, { recursive: true });
         }
 
         // Generate filename
@@ -776,7 +769,7 @@ async function uploadFile(req: Request): Promise<Response> {
         const buffer = Buffer.from(await file.arrayBuffer());
         const filePath = path.join(targetPath, filename);
 
-        await fsPromises.writeFile(filePath, new Uint8Array(buffer));
+        await writeFileAtomic(filePath, new Uint8Array(buffer));
 
         // Verify file was saved
         try {
@@ -834,6 +827,45 @@ async function uploadFile(req: Request): Promise<Response> {
     }
 }
 
+// Commit a staged Upload: every file has arrived, so publish the folder to SAVE_PATH in one rename
+async function commitFolder(req: Request): Promise<Response> {
+    try {
+        const body = await req.json();
+        const folder = body?.folder;
+        const files = body?.files;
+
+        if (typeof folder !== "string" || folder.length === 0 || /[\\/]|\.\./.test(folder)) {
+            return createErrorResponse("Missing or invalid 'folder'", HTTP_STATUS_BAD_REQUEST);
+        }
+        if (!Number.isInteger(files) || files < 1) {
+            return createErrorResponse("'files' must be a positive integer", HTTP_STATUS_BAD_REQUEST);
+        }
+
+        const uploadName = `${folder}_${getClientIdentifier(req)}`;
+        const result = await commitUpload(SAVE_PATH, uploadName, files);
+
+        if (result.status === "not_found") {
+            return createErrorResponse(`No upload in progress for folder '${folder}'`, HTTP_STATUS_NOT_FOUND);
+        }
+        if (result.status === "incomplete") {
+            return new Response(
+                JSON.stringify({
+                    success: false,
+                    message: `Expected ${files} files, received ${result.received.length}`,
+                    received: result.received
+                }),
+                { status: HTTP_STATUS_CONFLICT, headers: getResponseHeaders() }
+            );
+        }
+
+        console.log("---> Commit upload to SAVE_PATH: ", result.path);
+        return createSuccessResponse({ message: "Upload committed", name: result.name, local_path: result.path });
+    } catch (e: any) {
+        await logErrorToFile(e);
+        return createErrorResponse(e.message, HTTP_STATUS_SERVER_ERROR);
+    }
+}
+
 // Handle incoming requests
 async function handleRequest(req: Request): Promise<Response> {
     // get type of request
@@ -861,6 +893,9 @@ async function handleRequest(req: Request): Promise<Response> {
     }
     else if (req.method === "POST" && pathname === "/upload_file") {
         return uploadFile(req);
+    }
+    else if (req.method === "POST" && pathname === "/commit") {
+        return commitFolder(req);
     }
     else if (req.method === "POST" && pathname === "/upload_image_ftp") {
         return uploadImageToFtp(req);
@@ -915,6 +950,15 @@ async function handleRequest(req: Request): Promise<Response> {
             fetch: handleRequest,
             port: port,
         });
+
+        setInterval(async () => {
+            try {
+                const moved = await sweepStaleUploads(SAVE_PATH);
+                for (const name of moved) console.log("---> Quarantine stale upload: ", name);
+            } catch (e: any) {
+                await logErrorToFile(e);
+            }
+        }, STALE_SWEEP_INTERVAL_MS);
 
         //get ip address
         const ip = require('ip').address();
