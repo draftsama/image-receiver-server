@@ -4,7 +4,7 @@ import fs from "fs";
 import { promises as fsPromises } from "fs";
 import path from "path";
 import crypto from "crypto";
-import { commitUpload, stagingPathFor, sweepStaleUploads, writeFileAtomic } from "./staging";
+import { commitUpload, isSafePathSegment, stagingPathFor, sweepStaleUploads, writeFileAtomic } from "./staging";
 
 // Constants - Magic Numbers
 const MAX_FILE_SIZE_MB = 50; // Maximum file size in MB
@@ -425,6 +425,13 @@ async function uploadImage(req: Request, savePath: string, printPath: string): P
             return createErrorResponse("Invalid base64 format", HTTP_STATUS_BAD_REQUEST);
         }
 
+        if (jsonObj.folder && !isSafePathSegment(jsonObj.folder)) {
+            return createErrorResponse("Invalid 'folder'", HTTP_STATUS_BAD_REQUEST);
+        }
+        if (jsonObj.prefix_name && !isSafePathSegment(jsonObj.prefix_name)) {
+            return createErrorResponse("Invalid 'prefix_name'", HTTP_STATUS_BAD_REQUEST);
+        }
+
         // Get client identifier
         const clientId = getClientIdentifier(req);
         
@@ -693,6 +700,9 @@ async function uploadImageToFtp(req: Request): Promise<Response> {
             if (!sizeValidation.valid) {
                 return createErrorResponse(sizeValidation.message!, HTTP_STATUS_BAD_REQUEST);
             }
+            if (jsonObj.prefix_name && !isSafePathSegment(jsonObj.prefix_name)) {
+                return createErrorResponse("Invalid 'prefix_name'", HTTP_STATUS_BAD_REQUEST);
+            }
             const prefixName = jsonObj.prefix_name || "image";
             const date = new Date();
             const dateString = `${date.getDate()}_${date.toLocaleString('default', { month: 'short' })}_${date.getFullYear()}-${date.getHours()}_${date.getMinutes()}_${date.getSeconds()}`;
@@ -734,6 +744,12 @@ async function uploadFile(req: Request): Promise<Response> {
 
         if (!file) {
             return createErrorResponse("No file provided", HTTP_STATUS_BAD_REQUEST);
+        }
+        if (folder && !isSafePathSegment(folder)) {
+            return createErrorResponse("Invalid 'folder'", HTTP_STATUS_BAD_REQUEST);
+        }
+        if (prefix_name && !isSafePathSegment(prefix_name)) {
+            return createErrorResponse("Invalid 'prefix_name'", HTTP_STATUS_BAD_REQUEST);
         }
         
         // Validate file size
@@ -834,7 +850,7 @@ async function commitFolder(req: Request): Promise<Response> {
         const folder = body?.folder;
         const files = body?.files;
 
-        if (typeof folder !== "string" || folder.length === 0 || /[\\/]|\.\./.test(folder)) {
+        if (!isSafePathSegment(folder)) {
             return createErrorResponse("Missing or invalid 'folder'", HTTP_STATUS_BAD_REQUEST);
         }
         if (!Number.isInteger(files) || files < 1) {
